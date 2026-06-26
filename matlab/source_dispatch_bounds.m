@@ -31,7 +31,7 @@ for g = 1:ng
             Eavail = mpc.genOps(g, 4) * Prated * dt;   % MWh
             PlimE  = Eavail / dt;                       % 本时段功率上限 MW
             lbPg(g) = max(0, Pg0 - rDn);
-            ubPg(g) = min(Pmax(g), Pg0 + rUp, PlimE);
+            ubPg(g) = min([Pmax(g), Pg0 + rUp, PlimE]);
 
         case 3  % 风电：不可调度，可弃风
             lbPg(g) = 0;
