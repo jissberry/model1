@@ -11,6 +11,7 @@ docs/                       数学模型文档（中文）
   01_源荷失衡模型.md          第一步：源侧四类机组降容公式 + 荷侧负荷分类与温度响应
   02_最优潮流调度模型.md       第二步：DC-OPF 优化调度模型（目标/约束/Gurobi 标准型/结果）
   03_IEEE39修改版完整算例数据.md  修改版 IEEE39 完整节点/支路/机组/负荷数据 + MATLAB 用法
+  04_极热条件元件故障概率模型.md  第四步：变压器/电源/线路故障概率模型 + 文献 + 算例概率
   word/                     Word 格式导出（01/02/03 三份文档）
 
 matlab/                     MATLAB + Gurobi 主实现
@@ -21,12 +22,17 @@ matlab/                     MATLAB + Gurobi 主实现
   load_temperature.m        第一步-B：荷侧温度响应需求与一/二/三级拆分
   build_and_solve_dcopf.m   第二步：构建并用 Gurobi 求解 DC-OPF
   run_extreme_heat_opf.m    主程序入口（含结果报告）
+  fault_probability.m       第四步：变压器/电源/线路故障概率（主程序）
+  conductor_temperature.m   IEEE Std 738 稳态热平衡求解导线温度
+  fault_params.m            故障概率模型参数
+  print_fault_probabilities.m  打印三类元件故障概率报告
 
 verify/                     开源求解器验证（无需 MATLAB/Gurobi）
   case_data.py              与 MATLAB 完全一致的算例数据
   models.py                 源侧降容 / 荷侧温度模型
   verify_dcopf.py           cvxpy 复现 DC-OPF（参考实现）
   verify_matrix_form.py     逐元素复现 Gurobi 标准型矩阵装配并对比
+  fault_probability.py      第四步故障概率模型（Python 验证，与 MATLAB 一致）
 ```
 
 ## 运行
