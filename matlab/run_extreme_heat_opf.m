@@ -27,9 +27,13 @@ sc  = weather_scenario();
 % 第二步：构建并求解最优潮流调度
 res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel);
 res.typeName = typeName;
-res.loadBus = loadBus;
-res.Dtotal  = Dtotal;
-res.Dlevel  = Dlevel;
+res.loadBus  = loadBus;
+res.Dtotal   = Dtotal(:);
+res.Dlevel   = Dlevel;
+res.lbPg     = lbPg;
+res.ubPg     = ubPg;
+res.Pmin     = Pmin;
+res.Pmax     = Pmax;
 res = enrich_branch_flows(mpc, res);
 
 if verbose

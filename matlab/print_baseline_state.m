@@ -1,8 +1,33 @@
 function print_baseline_state(res, mpc, sc)
 %PRINT_BASELINE_STATE  打印极热场景 DC-OPF 求解后完整系统运行基准状态
 %
+%   用法:
+%     >> print_baseline_state()                    % 自动加载数据并求解/使用参考解
+%     >> print_baseline_state(res, mpc, sc)        % 打印指定结果结构体
+%
 %   输出：汇总、发电机出力、39 节点状态、负荷/切负荷、46 条支路/变压器潮流。
-%   res 来自 run_extreme_heat_opf 或 baseline_state_ref 转换结果。
+
+if nargin == 0
+    mpc = case39_ehnw();
+    sc  = weather_scenario();
+    try
+        fprintf('>> 正在调用 Gurobi 求解 DC-OPF ...\n');
+        res = run_extreme_heat_opf('verbose', false);
+        fprintf('>> 求解成功。\n');
+    catch ME
+        fprintf('>> Gurobi 不可用 (%s)，使用 baseline_state_ref。\n', ME.message);
+        ref = baseline_state_ref();
+        res = ref_to_res(ref, mpc, sc);
+    end
+elseif nargin < 3
+    error('print_baseline_state:InvalidInput', ...
+        '用法: print_baseline_state() 或 print_baseline_state(res, mpc, sc)');
+end
+
+% 若缺少支路潮流，由相角补算
+if ~isfield(res, 'branch_flow') || isempty(res.branch_flow)
+    res = enrich_branch_flows(mpc, res);
+end
 
 if isfield(res, 'summary')
     sm = res.summary;
@@ -65,12 +90,20 @@ end
 %% 节点状态
 fprintf('\n【11】节点运行状态 (39 节点)\n');
 fprintf('%-5s%10s%10s%10s%10s%10s%10s\n','bus','theta(deg)','Pg','D(T)','shed','served','P_inj');
-if isfield(res.theta_deg')
+if isfield(res, 'theta_deg')
     theta_deg = res.theta_deg(:);
+elseif isfield(res, 'theta')
+    theta_deg = res.theta(:) * 180 / pi;
 else
-    theta_deg = res.theta(:) * 180/pi;
+    error('print_baseline_state:MissingField', 'res 中缺少 theta 或 theta_deg 字段');
 end
 loadBus = res.loadBus(:);
+if ~isfield(res, 'shed') || isempty(res.shed)
+    error('print_baseline_state:MissingField', 'res 中缺少 shed 字段');
+end
+if ~isfield(res, 'Dtotal') || isempty(res.Dtotal)
+    error('print_baseline_state:MissingField', 'res 中缺少 Dtotal 字段');
+end
 shed = res.shed;
 if size(shed,1) ~= numel(loadBus)
     shed = shed';  % ensure nL x 3
