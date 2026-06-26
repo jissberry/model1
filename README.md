@@ -10,10 +10,13 @@
 docs/                       数学模型文档（中文）
   01_源荷失衡模型.md          第一步：源侧四类机组降容公式 + 荷侧负荷分类与温度响应
   02_最优潮流调度模型.md       第二步：DC-OPF 优化调度模型（目标/约束/Gurobi 标准型/结果）
+  03_IEEE39修改版完整算例数据.md  修改版 IEEE39 完整节点/支路/机组/负荷数据 + MATLAB 用法
+  word/                     Word 格式导出（01/02/03 三份文档）
 
 matlab/                     MATLAB + Gurobi 主实现
   case39_ehnw.m             修改版 IEEE39 算例数据（四类机组 + 各类负荷）
   weather_scenario.m        极热无风气象场景参数
+  print_case39_ehnw_data.m  打印完整算例数据（对照 docs/03）
   derate_sources.m          第一步-A：四类机组最大出力(降容)与出力区间
   load_temperature.m        第一步-B：荷侧温度响应需求与一/二/三级拆分
   build_and_solve_dcopf.m   第二步：构建并用 Gurobi 求解 DC-OPF
