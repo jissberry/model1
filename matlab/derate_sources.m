@@ -59,9 +59,13 @@ for g = 1:ng
             error('未知机组类型代码: %d', typeCode);
     end
 
-    % 最小技术出力（火电/水电按额定比例；风光为 0，可弃风弃光）
-    % 高温降容后若 Pmax < 名义 Pmin，则取 Pmin = min(Pmin, Pmax) 保证可行
-    Pmin(g) = min(pmin_frac * Prated, Pmax(g));
+    % 最小技术出力（按机组类型，与 docs/01 调度区间一致）
+    switch typeCode
+        case 1  % 火电：最小技术出力；高温降容后取 min 保可行
+            Pmin(g) = min(pmin_frac * Prated, Pmax(g));
+        case {2, 3, 4}  % 水电/风电/光伏：下限为 0（水电可全停，风光可弃发）
+            Pmin(g) = 0;
+    end
 end
 
 end

@@ -6,7 +6,9 @@
 
 约束:
   (1) 直流潮流节点功率平衡:  B_bus * theta = Pinj_pu
-  (2) 机组出力区间(含高温降容):  Pmin_g <= Pg <= Pmax_g(T)
+  (2) 源侧分类型调度约束(变量界):
+        火电: Pmin<=Pg<=Pmax(T) 且爬坡; 水电:0<=Pg<=Pmax 且电量/爬坡
+        风电/光伏: 0<=Pg<=Pmax(v,G,T)
   (3) 切负荷区间:  0 <= shed_{j,k} <= D_{j,k}(T)
   (4) 线路潮流约束:  -rateA_l <= f_l <= rateA_l
   (5) 平衡节点相角:  theta_slack = 0
@@ -39,16 +41,16 @@ def build_and_solve(verbose=True):
     load_buses = sorted(cd.PD0.keys())
     nlevel = len(sc['level_frac'])
 
-    # ---- 源侧：各机组极热降容后的出力区间 ----
+    # ---- 源侧：降容上限 + 分类型调度可行区间 ----
     pmax = np.zeros(ng)
     pmin = np.zeros(ng)
+    lb_pg = np.zeros(ng)
+    ub_pg = np.zeros(ng)
     for g, gen in enumerate(gens):
-        pmax_rated = gen[3]
-        pmin_frac = gen[4]
         pmax[g] = md.source_pmax(gen, sc)
-        # 火电/水电最小技术出力按额定容量的比例；风光最小为 0（可弃风弃光）
-        # 注意：当高温降容后 Pmax < 名义 Pmin 时，取 Pmin = min(Pmin, Pmax)
-        pmin[g] = min(pmin_frac * pmax_rated, pmax[g])
+        pmin[g] = md.source_pmin(gen, pmax[g])
+        lb_pg[g], ub_pg[g] = md.source_dispatch_bounds(
+            gen, cd.GEN_OPS[g], sc, pmax[g], pmin[g])
 
     # ---- 荷侧：温度修正需求 + 等级拆分 ----
     # D_level[bus][k]
@@ -80,8 +82,8 @@ def build_and_solve(verbose=True):
 
     constraints = []
 
-    # (2) 机组出力区间
-    constraints += [Pg >= pmin, Pg <= pmax]
+    # (2) 源侧分类型调度区间
+    constraints += [Pg >= lb_pg, Pg <= ub_pg]
 
     # (3) 切负荷区间
     Dmat = np.array([D_level[b] for b in load_buses])  # (nL, nlevel)
@@ -134,7 +136,7 @@ def build_and_solve(verbose=True):
         'Pg': Pg.value,
         'theta': theta.value,
         'shed': shed.value,
-        'pmax': pmax, 'pmin': pmin,
+        'pmax': pmax, 'pmin': pmin, 'lb_pg': lb_pg, 'ub_pg': ub_pg,
         'gens': gens, 'load_buses': load_buses,
         'D_total': D_total, 'D_level': D_level,
         'gen_cost': gen_cost.value, 'shed_cost': shed_cost.value,
@@ -161,16 +163,17 @@ def report(r, sc):
 
     # 源侧
     print('源侧机组出力 (MW):')
-    print(f"{'机组':<6}{'母线':<5}{'类型':<9}{'额定':>8}{'高温Pmax':>10}{'出力Pg':>10}{'利用率':>8}")
+    print(f"{'机组':<6}{'母线':<5}{'类型':<9}{'额定':>8}{'Pmin':>8}{'下界':>8}{'上界':>8}{'出力Pg':>10}{'利用率':>8}")
     tot_pg = 0.0
     type_cn = {'thermal': '火电', 'hydro': '水电', 'wind': '风电', 'solar': '光伏'}
     for g, gen in enumerate(gens):
         bus, gtype, fuel, prated = gen[0], gen[1], gen[2], gen[3]
         name = type_cn[gtype] + (f"-{fuel}" if fuel else '')
         util = Pg[g] / prated * 100 if prated > 0 else 0
-        print(f"G{g+1:<5}{bus:<5}{name:<9}{prated:>8.0f}{pmax[g]:>10.1f}{Pg[g]:>10.1f}{util:>7.1f}%")
+        print(f"G{g+1:<5}{bus:<5}{name:<9}{prated:>8.0f}{r['pmin'][g]:>8.1f}"
+              f"{r['lb_pg'][g]:>8.1f}{r['ub_pg'][g]:>8.1f}{Pg[g]:>10.1f}{util:>7.1f}%")
         tot_pg += Pg[g]
-    print(f"{'合计总发电':<29}{pmax.sum():>10.1f}{tot_pg:>10.1f}")
+    print(f"{'合计总发电':<29}{r['ub_pg'].sum():>8.1f}{tot_pg:>10.1f}")
     print('-' * 74)
 
     # 荷侧

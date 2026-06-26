@@ -89,6 +89,39 @@ def source_pmax(gen, sc):
     raise ValueError(f'未知机组类型: {gtype}')
 
 
+def source_pmin(gen, pmax):
+    """按机组类型计算最小技术出力（与 derate_sources.m 一致）。"""
+    gtype, pmax_rated, pmin_frac = gen[1], gen[3], gen[4]
+    if gtype == 'thermal':
+        return min(pmin_frac * pmax_rated, pmax)
+    return 0.0
+
+
+def source_dispatch_bounds(gen, ops, sc, pmax, pmin):
+    """计算单时段调度可行区间 lb/ub（含爬坡、水电电量约束）。"""
+    gtype, pmax_rated = gen[1], gen[3]
+    pg0, r_up, r_dn, e_frac = ops
+    dt = sc['dt_h']
+    r_up_mw = r_up * pmax_rated
+    r_dn_mw = r_dn * pmax_rated
+
+    if gtype == 'thermal':
+        lb = max(pmin, pg0 - r_dn_mw)
+        ub = min(pmax, pg0 + r_up_mw)
+    elif gtype == 'hydro':
+        plim_e = e_frac * pmax_rated * dt / dt
+        lb = max(0.0, pg0 - r_dn_mw)
+        ub = min(pmax, pg0 + r_up_mw, plim_e)
+    elif gtype in ('wind', 'solar'):
+        lb, ub = 0.0, pmax
+    else:
+        raise ValueError(f'未知机组类型: {gtype}')
+
+    if lb > ub + 1e-6:
+        raise ValueError(f'机组 {gen[0]} 调度区间不可行: lb={lb:.2f} > ub={ub:.2f}')
+    return lb, ub
+
+
 # =========================================================================
 # B. 荷侧温度响应与等级拆分
 # =========================================================================
