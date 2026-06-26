@@ -1,4 +1,4 @@
-function res = run_extreme_heat_opf()
+function res = run_extreme_heat_opf(varargin)
 %RUN_EXTREME_HEAT_OPF  极热无风场景源-荷失衡最优调度 主程序（MATLAB + Gurobi）
 %
 %   流程:
@@ -7,7 +7,14 @@ function res = run_extreme_heat_opf()
 %     第二步    build_and_solve_dcopf : 构建 DC-OPF 并调用 Gurobi 求解
 %
 %   运行前请确保 Gurobi 的 MATLAB 接口已安装（matlab/gurobi 在搜索路径中）。
-%   用法:  >> res = run_extreme_heat_opf();
+%   用法:
+%     >> res = run_extreme_heat_opf();           % 求解并打印报告
+%     >> res = run_extreme_heat_opf('verbose', false);  % 仅求解，不打印
+
+p = inputParser;
+addParameter(p, 'verbose', true, @islogical);
+parse(p, varargin{:});
+verbose = p.Results.verbose;
 
 mpc = case39_ehnw();
 sc  = weather_scenario();
@@ -20,9 +27,14 @@ sc  = weather_scenario();
 % 第二步：构建并求解最优潮流调度
 res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel);
 res.typeName = typeName;
+res.loadBus = loadBus;
+res.Dtotal  = Dtotal;
+res.Dlevel  = Dlevel;
+res = enrich_branch_flows(mpc, res);
 
-% 打印报告
-print_report(mpc, sc, res);
+if verbose
+    print_report(mpc, sc, res);
+end
 
 end
 

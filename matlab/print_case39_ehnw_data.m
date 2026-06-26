@@ -1,11 +1,15 @@
-function print_case39_ehnw_data()
-%PRINT_CASE39_EHNW_DATA  打印/导出修改版 IEEE39 完整算例数据
+function print_case39_ehnw_data(doSolve)
+%PRINT_CASE39_EHNW_DATA  打印修改版 IEEE39 完整算例数据与求解基准状态
 %
 %   用法:
-%     >> print_case39_ehnw_data()
+%     >> print_case39_ehnw_data()        % 先打印算例数据，再尝试求解并打印基准状态
+%     >> print_case39_ehnw_data(false)    % 仅打印算例数据 + 参考基准状态（无需 Gurobi）
 %
-%   在命令窗口输出全部节点、支路、机组、运行参数与气象场景数据，
-%   便于核对 docs/03_IEEE39修改版完整算例数据.md 中的表格。
+%   输出章节:
+%     【1】–【8】 算例原始数据（节点/支路/机组/场景参数）
+%     【9】–【13】极热场景 DC-OPF 求解后系统运行基准状态
+
+if nargin < 1, doSolve = true; end
 
 mpc = case39_ehnw();
 sc  = weather_scenario();
@@ -120,9 +124,28 @@ for k = 1:numel(loadBus)
 end
 fprintf('  合计: Pd0=%.2f, D(T)=%.2f MW\n', sum(mpc.busPd0(:,2)), sum(Dtotal));
 
+%% 9–13 求解后系统运行基准状态
+if doSolve
+    try
+        fprintf('\n>> 正在调用 Gurobi 求解 DC-OPF ...\n');
+        res = run_extreme_heat_opf('verbose', false);
+        fprintf('>> 求解成功，以下为实时最优解。\n');
+    catch ME
+        fprintf('\n>> Gurobi 求解不可用 (%s)，使用 baseline_state_ref 参考数据。\n', ME.message);
+        ref = baseline_state_ref();
+        res = ref_to_res(ref, mpc, sc);
+    end
+else
+    ref = baseline_state_ref();
+    res = ref_to_res(ref, mpc, sc);
+    fprintf('\n>> 使用 baseline_state_ref 参考基准状态（与 Gurobi/Python 一致）。\n');
+end
+print_baseline_state(res, mpc, sc);
+
 fprintf('\n%s\n', sep);
 fprintf('数据文件: matlab/case39_ehnw.m, matlab/weather_scenario.m\n');
 fprintf('运行优化: res = run_extreme_heat_opf();\n');
+fprintf('完整表格: docs/03_IEEE39修改版完整算例数据.md 第 11 节\n');
 fprintf('%s\n', sep);
 
 end
