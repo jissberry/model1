@@ -1,8 +1,29 @@
-function print_fault_probabilities(fp_res)
+function fp_res = print_fault_probabilities(fp_res)
 %PRINT_FAULT_PROBABILITIES  打印极热条件三类元件故障概率报告
 %
-%   print_fault_probabilities(fp_res)
+%   用法:
+%     >> print_fault_probabilities()           % 自动计算并打印
+%     >> print_fault_probabilities(fp_res)     % 打印指定结果结构体
+%
 %   fp_res 由 fault_probability() 返回。
+
+if nargin == 0
+    mpc = case39_ehnw();
+    sc  = weather_scenario();
+    try
+        fprintf('>> 正在调用 Gurobi 求解 DC-OPF 获取基准状态 ...\n');
+        res = run_extreme_heat_opf('verbose', false);
+        fprintf('>> 求解成功，正在计算故障概率 ...\n');
+    catch ME
+        fprintf('>> Gurobi 不可用 (%s)，使用 baseline_state_ref。\n', ME.message);
+        ref = baseline_state_ref();
+        res = ref_to_res(ref, mpc, sc);
+    end
+    fp_res = fault_probability(res, mpc, sc, false);
+elseif nargin < 1
+    error('print_fault_probabilities:InvalidInput', ...
+        '用法: print_fault_probabilities() 或 print_fault_probabilities(fp_res)');
+end
 
 sc = fp_res.scenario;
 sep = repmat('=', 1, 90);

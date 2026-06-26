@@ -1,9 +1,10 @@
-function fp_res = fault_probability(res, mpc, sc)
+function fp_res = fault_probability(res, mpc, sc, doPrint)
 %FAULT_PROBABILITY  极热条件下变压器/电源/线路故障概率（基于运行基准状态）
 %
 %   用法:
-%     >> fp = fault_probability()                 % 自动加载并求解/使用参考解
-%     >> fp = fault_probability(res, mpc, sc)      % 用指定的基准状态结果
+%     >> fp = fault_probability()                      % 自动加载并求解/使用参考解
+%     >> fp = fault_probability(res, mpc, sc)           % 用指定的基准状态结果
+%     >> fp = fault_probability(res, mpc, sc, false)    % 仅计算，不打印
 %
 %   在第二步 DC-OPF 求解得到的系统运行基准状态(发电机出力 Pg、变压器/线路潮流)
 %   基础上，建立三类元件在极热(高温+无风+强辐照)条件下的故障概率模型：
@@ -31,6 +32,9 @@ if nargin == 0
 elseif nargin < 3
     error('fault_probability:InvalidInput', ...
         '用法: fault_probability() 或 fault_probability(res, mpc, sc)');
+end
+if nargin < 4 || isempty(doPrint)
+    doPrint = true;
 end
 
 % 若缺少支路潮流，由相角补算
@@ -118,7 +122,9 @@ fp_res.transformers = xf;
 fp_res.generators = gen;
 fp_res.lines = ln;
 
-print_fault_probabilities(fp_res);
+if doPrint
+    print_fault_probabilities(fp_res);
+end
 
 end
 
