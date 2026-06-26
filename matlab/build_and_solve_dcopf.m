@@ -1,4 +1,4 @@
-function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, loadBus, Dtotal, Dlevel)
+function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel)
 %BUILD_AND_SOLVE_DCOPF  第二步：构建并用 Gurobi 求解极热场景源-荷失衡 DC-OPF
 %
 %   决策变量  x = [ Pg(ng) ; theta(nb) ; shed(nL*nLevel) ]
@@ -6,11 +6,12 @@ function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, loadBus, Dtotal, Dleve
 %   目标:  min  sum_g (c2_g*Pg^2 + c1_g*Pg) + sum_{l,k} VOLL_k*shed_{l,k}
 %
 %   约束:
-%     (1) 直流潮流节点功率平衡(等式):
-%             base*(Bbus*theta)_n - sum_{g@n}Pg - sum_k shed_{n,k} = -D_n
-%     (2) 机组出力区间:           Pmin_g <= Pg <= Pmax_g(T)
+%     (1) 直流潮流节点功率平衡(等式)
+%     (2) 源侧分类型调度约束(变量界):
+%           火电: Pmin<=Pg<=Pmax(T) 且爬坡; 水电:0<=Pg<=Pmax且电量/爬坡
+%           风电/光伏: 0<=Pg<=Pmax(v,G,T)
 %     (3) 切负荷区间:             0 <= shed_{l,k} <= D_{l,k}(T)
-%     (4) 线路潮流约束:           -rateA_l <= base*b_l*(theta_i-theta_j) <= rateA_l
+%     (4) 线路潮流约束
 %     (5) 平衡节点相角:           theta_slack = 0
 %
 %   需要 Gurobi 的 MATLAB 接口 (gurobi.m 在路径中)。
@@ -104,9 +105,9 @@ A = sparse(I, J, V, row, nvar);
 % ---- 变量上下界 ----
 lb = -inf(nvar,1);
 ub =  inf(nvar,1);
-% Pg
-lb(1:ng)   = Pmin;
-ub(1:ng)   = Pmax;
+% Pg — 源侧分类型调度区间（lbPg/ubPg 已含降容、最小出力、爬坡、水电电量）
+lb(1:ng)   = lbPg;
+ub(1:ng)   = ubPg;
 % theta 自由，平衡节点固定为 0
 lb(iTh(mpc.slackBus)) = 0;
 ub(iTh(mpc.slackBus)) = 0;
@@ -156,6 +157,7 @@ res.Pg       = x(1:ng);
 res.theta    = x(ng+1 : ng+nb);
 res.shed     = reshape(x(ng+nb+1:end), nL, nLev);
 res.Pmax     = Pmax;  res.Pmin = Pmin;
+res.lbPg     = lbPg;  res.ubPg = ubPg;
 res.loadBus  = loadBus; res.Dtotal = Dtotal; res.Dlevel = Dlevel;
 res.bser     = bser;  res.fb = fb;  res.tb = tb;
 res.rateA    = mpc.branch(:,4);

@@ -34,7 +34,12 @@ def solve_matrix_form():
 
     # ---- 源/荷模型 ----
     Pmax = np.array([md.source_pmax(g, sc) for g in gens])
-    Pmin = np.array([min(g[4] * g[3], Pmax[i]) for i, g in enumerate(gens)])
+    Pmin = np.array([md.source_pmin(g, Pmax[i]) for i, g in enumerate(gens)])
+    lbPg = np.zeros(ng)
+    ubPg = np.zeros(ng)
+    for i, g in enumerate(gens):
+        lbPg[i], ubPg[i] = md.source_dispatch_bounds(
+            g, cd.GEN_OPS[i], sc, Pmax[i], Pmin[i])
 
     Dtotal = np.array([md.bus_demand(cd.PD0[b], sc) for b in load_buses])
     Dlevel = np.outer(Dtotal, np.array(sc['level_frac']))  # (nL, nLev)
@@ -122,8 +127,8 @@ def solve_matrix_form():
     # ---- 上下界 ----
     lb = -np.inf * np.ones(nvar)
     ub = np.inf * np.ones(nvar)
-    lb[:ng] = Pmin
-    ub[:ng] = Pmax
+    lb[:ng] = lbPg
+    ub[:ng] = ubPg
     lb[iTh(cd.SLACK_BUS)] = 0.0
     ub[iTh(cd.SLACK_BUS)] = 0.0
     for l in range(nL):

@@ -14,10 +14,11 @@ sc  = weather_scenario();
 
 % 第一步：源/荷失衡模型
 [Pmax, Pmin, typeName]      = derate_sources(mpc, sc);
+[lbPg, ubPg]                = source_dispatch_bounds(mpc, sc, Pmax, Pmin);
 [loadBus, Dtotal, Dlevel]   = load_temperature(mpc, sc);
 
 % 第二步：构建并求解最优潮流调度
-res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, loadBus, Dtotal, Dlevel);
+res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel);
 res.typeName = typeName;
 
 % 打印报告
@@ -39,13 +40,15 @@ fprintf('%s\n', repmat('-',1,74));
 
 ng = size(mpc.gen,1);
 fprintf('源侧机组出力 (MW):\n');
-fprintf('%-6s%-5s%-10s%9s%10s%10s%8s\n','机组','母线','类型','额定','高温Pmax','出力Pg','利用率');
+fprintf('%-6s%-5s%-10s%9s%10s%10s%10s%10s%8s\n', ...
+    '机组','母线','类型','额定','Pmin','调度下界','调度上界','出力Pg','利用率');
 totPg = 0;
 for g = 1:ng
     prated = mpc.gen(g,4);
     util = 0; if prated>0, util = res.Pg(g)/prated*100; end
-    fprintf('G%-5d%-5d%-10s%9.0f%10.1f%10.1f%7.1f%%\n', ...
-        g, mpc.gen(g,1), res.typeName{g}, prated, res.Pmax(g), res.Pg(g), util);
+    fprintf('G%-5d%-5d%-10s%9.0f%10.1f%10.1f%10.1f%10.1f%7.1f%%\n', ...
+        g, mpc.gen(g,1), res.typeName{g}, prated, res.Pmin(g), ...
+        res.lbPg(g), res.ubPg(g), res.Pg(g), util);
     totPg = totPg + res.Pg(g);
 end
 fprintf('合计  可用上限=%.1f  总发电=%.1f MW\n', sum(res.Pmax), totPg);

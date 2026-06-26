@@ -1,6 +1,9 @@
 function sc = weather_scenario()
 %WEATHER_SCENARIO  极热无风气象场景参数（与 verify/case_data.py 一致）
 
+% ---- 调度时段（单时段快照基准状态）----
+sc.dt_h       = 1.0;      % 调度时段长度 (h)，用于爬坡与水电电量约束
+
 % ---- 环境温度 / 风况 / 辐照 ----
 sc.T_amb      = 40.0;     % 极热环境温度 (°C)
 sc.wind_speed = 2.0;      % 近地面风速 (m/s)，< 切入风速 => 风电近乎为 0
