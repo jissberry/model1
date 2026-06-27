@@ -71,21 +71,23 @@ def md_section():
     lines.append('')
 
     # Branches - all 46
-    lines.append('### 11.5 支路/变压器潮流（46 条完整表）')
+    lines.append('### 11.5 支路潮流（46 条完整表；含变比支路）')
     lines.append('')
-    lines.append('列说明：`类型` 为线路或变压器；`tap` 为变比（线路取 1.0）；`潮流` 为 $f_{bus}\\to t_{bus}$ 方向有功 (MW)。')
+    lines.append('列说明：`类型` 为线路或**变比支路**（`tap≠0` 的含变比支路）；`tap` 为变比（线路取 1.0）；`潮流` 为 $f_{bus}\\to t_{bus}$ 方向有功 (MW)。')
+    lines.append('')
+    lines.append('> 注：`tap≠0` 的 12 条支路是 DC 模型中的**含变比支路**，仅用于潮流计算；本研究的**物理变压器**按"每个非电源节点一台同型号"建模（见第 12 节与 `docs/04`），与这些支路不是同一对象。')
     lines.append('')
     lines.append('| No. | fbus | tbus | 类型 | tap | 潮流 (MW) | 限额 (MW) | 负载率 (%) | 功率方向 |')
     lines.append('|----:|-----:|-----:|------|----:|----------:|----------:|-----------:|----------|')
     for b in st['branches']:
-        typ = '变压器' if b['is_transformer'] else '线路'
+        typ = '变比支路' if b['is_transformer'] else '线路'
         tap = b['tap'] if b['is_transformer'] else 1.0
         lines.append(f"| {b['L']} | {b['fbus']} | {b['tbus']} | {typ} | {tap:.3f} | "
                      f"{b['flow_MW']:.2f} | {b['rateA']:.0f} | {b['loading_pct']:.2f} | {b['direction']} |")
     lines.append('')
 
-    # Transformer only
-    lines.append('### 11.6 变压器支路潮流专表（12 台）')
+    # Tap branches only
+    lines.append('### 11.6 含变比(tap≠0)支路潮流专表（12 条）')
     lines.append('')
     lines.append('| No. | fbus | tbus | tap | 潮流 (MW) | 限额 (MW) | 负载率 (%) | 功率方向 |')
     lines.append('|----:|-----:|-----:|----:|----------:|----------:|-----------:|----------|')

@@ -6,14 +6,14 @@ function fp = fault_params()
 % ---- 评估窗口：一次持续高温事件(持续高温日) ----
 fp.t_expose_h = 24.0;
 
-% ---- A. 变压器 (IEEE C57.91-2011 + Arrhenius-Weibull) ----
+% ---- A. 变压器 (IEEE C57.91-2011 + Arrhenius-Weibull, 环境温度驱动) ----
+%   DC 潮流无无功/电压，变压器视在负载不可得；按铭牌额定负载的设计热点温升、
+%   热应力由环境温度驱动。每个非电源节点一台同型号变压器。
 fp.xf_lambda0_yr = 0.020;   % 正常条件基准年故障率 (/yr)
 fp.xf_dTO_rated  = 55.0;    % 额定负载顶层油温升 ΔθTO,R (°C)
 fp.xf_dH_rated   = 25.0;    % 额定负载热点-顶油温差 ΔθH,R (°C)
-fp.xf_R          = 8.0;     % 负载损耗/空载损耗之比 R
-fp.xf_n          = 0.9;     % 顶油温升指数 n
-fp.xf_m          = 0.8;     % 绕组温升指数 m
-fp.xf_theta_ref  = 110.0;   % 参考热点温度 (°C, 65°C-rise 绝缘正常寿命点)
+%   额定热点温升(铭牌) ΔθHS,R = ΔθTO,R + ΔθH,R = 80°C
+fp.xf_theta_ref  = 110.0;   % 参考热点温度 (°C, 30°C 环境 + 80°C 额定温升, 正常寿命点)
 fp.xf_B_arr      = 15000.0; % Arrhenius 老化常数 B (IEEE C57.91-2011)
 
 % ---- B. 电源 (比例风险/Logistic 应力模型) ----

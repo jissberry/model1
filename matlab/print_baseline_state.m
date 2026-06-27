@@ -141,9 +141,9 @@ for k = 1:numel(loadBus)
         b, pd0, d, s1, s2, s3, s1+s2+s3, d-(s1+s2+s3));
 end
 
-%% 支路/变压器潮流
-fprintf('\n【13】支路/变压器潮流 (46 条)\n');
-fprintf('%-4s%-5s%-5s%-6s%-6s%12s%10s%10s%s\n', ...
+%% 支路潮流（含变比支路）
+fprintf('\n【13】支路潮流 (46 条；tap≠0 为含变比支路)\n');
+fprintf('%-4s%-5s%-5s%-8s%-6s%12s%10s%10s%s\n', ...
     'L','fbus','tbus','类型','tap','flow(MW)','rateA','load%%','方向');
 nbr = size(mpc.branch,1);
 for l = 1:nbr
@@ -152,7 +152,7 @@ for l = 1:nbr
     if tap == 0
         typ = '线路'; tapShow = 1.0;
     else
-        typ = '变压器'; tapShow = tap;
+        typ = '变比支路'; tapShow = tap;
     end
     flow = res.branch_flow(l);
     rateA = mpc.branch(l,4);
@@ -162,7 +162,7 @@ for l = 1:nbr
     else
         dir = sprintf('%d->%d', t, f);
     end
-    fprintf('L%-3d%-5d%-5d%-6s%-6.3f%12.2f%10.0f%9.2f%% %s\n', ...
+    fprintf('L%-3d%-5d%-5d%-8s%-6.3f%12.2f%10.0f%9.2f%% %s\n', ...
         l, f, t, typ, tapShow, flow, rateA, pct, dir);
 end
 
