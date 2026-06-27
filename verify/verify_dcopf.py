@@ -25,7 +25,7 @@ import case_data as cd
 import models as md
 
 
-def build_and_solve(verbose=True):
+def build_and_solve(verbose=True, gen_available=None, branch_available=None):
     sc = cd.SCENARIO
     base = cd.BASE_MVA
 
@@ -36,6 +36,20 @@ def build_and_solve(verbose=True):
 
     gens = cd.GENS
     ng = len(gens)
+    if gen_available is None:
+        gen_available = np.ones(ng, dtype=bool)
+    else:
+        gen_available = np.asarray(gen_available, dtype=bool)
+        if gen_available.size != ng:
+            raise ValueError(f'gen_available 长度应为 {ng}，当前为 {gen_available.size}')
+
+    nbr = len(cd.BRANCHES)
+    if branch_available is None:
+        branch_available = np.ones(nbr, dtype=bool)
+    else:
+        branch_available = np.asarray(branch_available, dtype=bool)
+        if branch_available.size != nbr:
+            raise ValueError(f'branch_available 长度应为 {nbr}，当前为 {branch_available.size}')
 
     # 负荷节点（Pd0>0）
     load_buses = sorted(cd.PD0.keys())
@@ -51,6 +65,11 @@ def build_and_solve(verbose=True):
         pmin[g] = md.source_pmin(gen, pmax[g])
         lb_pg[g], ub_pg[g] = md.source_dispatch_bounds(
             gen, cd.GEN_OPS[g], sc, pmax[g], pmin[g])
+        if not gen_available[g]:
+            pmax[g] = 0.0
+            pmin[g] = 0.0
+            lb_pg[g] = 0.0
+            ub_pg[g] = 0.0
 
     # ---- 荷侧：温度修正需求 + 等级拆分 ----
     # D_level[bus][k]
@@ -63,16 +82,18 @@ def build_and_solve(verbose=True):
 
     # ---- 直流潮流 B_bus 矩阵 与 支路灵敏度 ----
     Bbus = np.zeros((nb, nb))
-    branch_rows = []  # (i, j, b_series, rateA) 用于线路潮流约束
-    for (f, t, x, rateA, ratio) in cd.BRANCHES:
+    branch_rows = []  # (i, j, b_series, rateA, active) 用于线路潮流约束/报告
+    for ell, (f, t, x, rateA, ratio) in enumerate(cd.BRANCHES):
         tap = ratio if ratio != 0.0 else 1.0
         b_series = 1.0 / (x * tap)
         i, j = bidx[f], bidx[t]
-        Bbus[i, i] += b_series
-        Bbus[j, j] += b_series
-        Bbus[i, j] -= b_series
-        Bbus[j, i] -= b_series
-        branch_rows.append((i, j, b_series, rateA))
+        active = bool(branch_available[ell])
+        if active:
+            Bbus[i, i] += b_series
+            Bbus[j, j] += b_series
+            Bbus[i, j] -= b_series
+            Bbus[j, i] -= b_series
+        branch_rows.append((i, j, b_series, rateA, active))
 
     # ---- 决策变量 ----
     Pg = cp.Variable(ng, name='Pg')
@@ -114,7 +135,9 @@ def build_and_solve(verbose=True):
     constraints += [Bbus @ theta == inj / base]
 
     # (4) 线路潮流约束:  f_l = base * b_series * (theta_i - theta_j)
-    for (i, j, b_series, rateA) in branch_rows:
+    for (i, j, b_series, rateA, active) in branch_rows:
+        if not active:
+            continue
         flow = base * b_series * (theta[i] - theta[j])
         constraints += [flow <= rateA, flow >= -rateA]
 
@@ -130,6 +153,13 @@ def build_and_solve(verbose=True):
     prob = cp.Problem(objective, constraints)
     prob.solve(solver=cp.CLARABEL, verbose=False)
 
+    branch_flow = None
+    if theta.value is not None:
+        branch_flow = np.zeros(len(branch_rows))
+        for ell, (i, j, b_series, _rateA, active) in enumerate(branch_rows):
+            if active:
+                branch_flow[ell] = base * b_series * (theta.value[i] - theta.value[j])
+
     result = {
         'status': prob.status,
         'obj': prob.value,
@@ -141,6 +171,8 @@ def build_and_solve(verbose=True):
         'D_total': D_total, 'D_level': D_level,
         'gen_cost': gen_cost.value, 'shed_cost': shed_cost.value,
         'branch_rows': branch_rows, 'bidx': bidx,
+        'gen_available': gen_available, 'branch_available': branch_available,
+        'branch_flow': branch_flow,
     }
     if verbose:
         report(result, sc)
@@ -197,13 +229,17 @@ def report(r, sc):
     theta = r['theta']
     n_overload = 0
     max_load_pct = 0.0
-    for (i, j, b_series, rateA) in r['branch_rows']:
+    n_outaged = 0
+    for (i, j, b_series, rateA, active) in r['branch_rows']:
+        if not active:
+            n_outaged += 1
+            continue
         flow = base * b_series * (theta[i] - theta[j])
         pct = abs(flow) / rateA * 100
         max_load_pct = max(max_load_pct, pct)
         if pct > 100.0 + 1e-6:
             n_overload += 1
-    print(f"  线路最大负载率 {max_load_pct:.1f}%，越限线路数 {n_overload}")
+    print(f"  线路最大负载率 {max_load_pct:.1f}%，越限线路数 {n_overload}，退出线路数 {n_outaged}")
     print(sep)
 
 
