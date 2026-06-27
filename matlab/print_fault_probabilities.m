@@ -30,20 +30,20 @@ sep = repmat('=', 1, 90);
 fprintf('\n%s\n', sep);
 fprintf('极热条件元件故障概率 (T=%.0f°C, v=%.0f m/s, G=%.0f W/m², 评估窗口=%.0f h)\n', ...
     sc.T_amb, sc.wind, sc.irradiance, sc.t_expose_h);
-fprintf('统一节点变压器额定容量 S_T^{rated} = %.0f MW（共 %d 台，非电源节点各一台）\n', ...
-    sc.xf_S_rated, sc.n_transformers);
+fprintf('节点变压器：每个非电源节点一台同型号（共 %d 台，环境温度驱动）\n', ...
+    sc.n_transformers);
 fprintf('代表性导线额定电流 I_R = %.1f A\n', sc.I_rated_A);
 
 %% A. 变压器
 fprintf('%s\n', sep);
-fprintf('【A】节点变压器故障概率 (IEEE C57.91 热点 + Arrhenius-Weibull)\n');
-fprintf('%-4s%-5s%10s%8s%10s%10s%12s%12s\n', ...
-    'Tx','bus','P(MW)','K','thetaH','FAA','lambda/yr','Pf');
+fprintf('【A】节点变压器故障概率 (IEEE C57.91 热点(环境温度驱动) + Arrhenius-Weibull)\n');
+fprintf('%-4s%-5s%10s%10s%12s%12s\n', ...
+    'Tx','bus','thetaH','FAA','lambda/yr','Pf');
 xf = fp_res.transformers;
 for i = 1:numel(xf)
     d = xf(i);
-    fprintf('T%-3d%-5d%10.2f%8.3f%10.1f%10.3f%12.4f%12.3e\n', ...
-        d.Tx, d.bus, d.P_MW, d.K, d.thetaH, d.FAA, d.lambda_yr, d.Pf);
+    fprintf('T%-3d%-5d%10.1f%10.3f%12.4f%12.3e\n', ...
+        d.Tx, d.bus, d.thetaH, d.FAA, d.lambda_yr, d.Pf);
 end
 
 %% B. 电源

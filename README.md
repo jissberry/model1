@@ -23,7 +23,6 @@ matlab/                     MATLAB + Gurobi 主实现
   build_and_solve_dcopf.m   第二步：构建并用 Gurobi 求解 DC-OPF
   run_extreme_heat_opf.m    主程序入口（含结果报告）
   fault_probability.m       第四步：节点变压器/电源/线路故障概率（主程序）
-  node_xf_power.m           非电源节点变压器通过功率 P_served
   conductor_temperature.m   IEEE Std 738 稳态热平衡求解导线温度
   fault_params.m            故障概率模型参数
   print_fault_probabilities.m  打印三类元件故障概率报告
