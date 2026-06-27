@@ -87,13 +87,17 @@ fprintf('  总发电 %.1f =?= 净需求 %.1f  (残差 %+.3f)\n', ...
 
 % 线路负载率
 nbr = numel(res.bser);
-maxpct = 0; nover = 0;
+maxpct = 0; nover = 0; nout = 0;
 for l = 1:nbr
+    if isfield(res, 'branchAvailable') && ~res.branchAvailable(l)
+        nout = nout + 1;
+        continue;
+    end
     f = mpc.baseMVA*res.bser(l)*(res.theta(res.fb(l))-res.theta(res.tb(l)));
     pct = abs(f)/res.rateA(l)*100;
     if pct>maxpct, maxpct=pct; end
     if pct>100+1e-6, nover=nover+1; end
 end
-fprintf('  线路最大负载率 %.1f%%，越限线路数 %d\n', maxpct, nover);
+fprintf('  线路最大负载率 %.1f%%，越限线路数 %d，退出线路数 %d\n', maxpct, nover, nout);
 fprintf('%s\n', sep);
 end
