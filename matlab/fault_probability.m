@@ -6,13 +6,13 @@ function fp_res = fault_probability(res, mpc, sc, doPrint)
 %     >> fp = fault_probability(res, mpc, sc)           % 用指定的基准状态结果
 %     >> fp = fault_probability(res, mpc, sc, false)    % 仅计算，不打印
 %
-%   在第二步 DC-OPF 求解得到的系统运行基准状态(发电机出力 Pg、变压器/线路潮流)
+%   在第二步 DC-OPF 求解得到的系统运行基准状态(发电机出力 Pg、节点供电负荷、线路潮流)
 %   基础上，建立三类元件在极热(高温+无风+强辐照)条件下的故障概率模型：
-%     A. 变压器  —— IEEE C57.91 热点温度 + Arrhenius 老化加速 (W. Li 2002)
+%     A. 变压器  —— 每个非电源节点一台同型号变压器；IEEE C57.91 热点 + Arrhenius 老化加速
 %     B. 电源    —— 比例风险(Cox)/Logistic 应力相关强迫停运率
 %     C. 线路    —— IEEE Std 738 导线温度 + 温度/过载应力指数模型
 %
-%   关键：变压器功率->负载比 K；发电机出力 Pg->出力率 ℓ；线路潮流->电流/负载比。
+%   关键：节点变压器功率 P_served -> 负载比 K；发电机 Pg -> 出力率 ℓ；线路潮流 -> 负载比 beta。
 %   并结合极热场景赋值(40°C, 2 m/s, 900 W/m²)。
 %
 %   与 verify/fault_probability.py 数值一致；详见 docs/04。
@@ -45,22 +45,20 @@ end
 fp = fault_params();
 Ta = sc.T_amb; v = sc.wind_speed; G = sc.irradiance;
 
-%% ---------- A. 变压器 ----------
-nbr = size(mpc.branch,1);
-xf = struct('L',{},'fbus',{},'tbus',{},'rateA',{},'flow',{}, ...
+%% ---------- A. 变压器（每个非电源节点一台，同型号）----------
+[xfBus, xfP] = node_xf_power(mpc, res);
+S_rated = fp.xf_S_rated;
+xf = struct('Tx',{},'bus',{},'S_rated',{},'P_MW',{}, ...
             'K',{},'thetaH',{},'FAA',{},'lambda_yr',{},'Pf',{});
-for l = 1:nbr
-    tap = mpc.branch(l,5);
-    if tap == 0, continue; end
-    f = mpc.branch(l,1); t = mpc.branch(l,2);
-    rateA = mpc.branch(l,4);
-    flow = res.branch_flow(l);
-    K = abs(flow)/rateA;
+for i = 1:numel(xfBus)
+    b = xfBus(i);
+    P = xfP(i);
+    K = P / S_rated;
     thetaH = xf_hotspot(K, Ta, fp);
     FAA = xf_faa(thetaH, fp);
     lam_yr = fp.xf_lambda0_yr * FAA;
     Pf = pf_from_rate(lam_yr, fp);
-    xf(end+1) = struct('L',l,'fbus',f,'tbus',t,'rateA',rateA,'flow',flow, ...
+    xf(end+1) = struct('Tx',i,'bus',b,'S_rated',S_rated,'P_MW',P, ...
         'K',K,'thetaH',thetaH,'FAA',FAA,'lambda_yr',lam_yr,'Pf',Pf); %#ok<AGROW>
 end
 
@@ -95,6 +93,7 @@ for g = 1:ng
 end
 
 %% ---------- C. 线路 ----------
+nbr = size(mpc.branch, 1);
 I_R = rated_current(fp);
 ln = struct('L',{},'fbus',{},'tbus',{},'rateA',{},'flow',{}, ...
             'beta',{},'I',{},'Tc',{},'stress',{},'lambda_yr',{},'Pf',{});
@@ -117,7 +116,8 @@ end
 
 fp_res = struct();
 fp_res.scenario = struct('T_amb',Ta,'wind',v,'irradiance',G, ...
-    't_expose_h',fp.t_expose_h,'I_rated_A',I_R);
+    't_expose_h',fp.t_expose_h,'I_rated_A',I_R,'xf_S_rated',S_rated, ...
+    'n_transformers',numel(xf));
 fp_res.transformers = xf;
 fp_res.generators = gen;
 fp_res.lines = ln;

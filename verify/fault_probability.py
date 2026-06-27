@@ -10,7 +10,7 @@
   C. 线路故障概率     —— IEEE Std 738 导线温度 + 温度/过载应力指数模型
 
 关键思想（与题目要求一致）：
-  * 变压器功率（潮流）是变压器故障概率的输入参数 -> 负载比 K -> 热点温度；
+  * 每个非电源节点一台同型号变压器；节点供电负荷 P_served 是变压器故障概率输入 -> 负载比 K；
   * 发电机出力 Pg 是发电机故障概率的输入参数 -> 出力率 ℓ -> 应力协变量；
   * 线路潮流是线路故障概率的输入参数 -> 电流/负载比 -> 导线温度。
 并结合极热条件赋值（环境温度 40°C、风速 2 m/s、辐照 900 W/m²）。
@@ -46,6 +46,7 @@ FP = {
     'xf_m':         0.8,      # 绕组温升指数 m
     'xf_theta_ref': 110.0,    # 参考热点温度 (°C, 65°C-rise 绝缘正常寿命点)
     'xf_B_arr':     15000.0,  # Arrhenius 老化常数 B (IEEE C57.91-2011)
+    'xf_S_rated':   500.0,    # 统一节点变压器额定容量 (MVA/MW)
 
     # ---- B. 电源（比例风险/Logistic 应力模型）----
     # 基准年强迫停运频次 λ0 (/yr)、温度应力系数 aT (1/°C)、出力应力系数 aL
@@ -85,7 +86,7 @@ def transformer_hotspot(K, Ta):
 
     θH = θa + ΔθTO,R·[(K²R+1)/(R+1)]^n + ΔθH,R·K^(2m)
 
-    K  : 变压器负载比 = |潮流|/额定容量（来自基准状态）
+    K  : 变压器负载比 = P_served / S_T^rated（来自基准状态，非电源节点）
     Ta : 环境温度 (°C)
     """
     dTO = FP['xf_dTO_rated'] * ((K ** 2 * FP['xf_R'] + 1.0) / (FP['xf_R'] + 1.0)) ** FP['xf_n']
@@ -243,6 +244,23 @@ def line_pf(beta, Ta, v, G, I_rated):
     return I, Tc, stress, lam_yr, pf
 
 
+def node_xf_power(gens, load_buses, Dtotal_vec, shed, n_bus):
+    """非电源节点变压器通过功率 = 该节点实际供电负荷（无负荷节点取 0）。"""
+    gen_buses = {g[0] for g in gens}
+    lb_pos = {b: i for i, b in enumerate(load_buses)}
+    xf_bus, xf_p = [], []
+    for b in range(1, n_bus + 1):
+        if b in gen_buses:
+            continue
+        p = 0.0
+        if b in lb_pos:
+            k = lb_pos[b]
+            p = float(Dtotal_vec[k] - shed[k, :].sum())
+        xf_bus.append(b)
+        xf_p.append(max(p, 0.0))
+    return xf_bus, xf_p
+
+
 # =========================================================================
 # 主流程：从基准状态读取功率，计算三类元件故障概率
 # =========================================================================
@@ -255,21 +273,20 @@ def compute(verbose=True):
     theta = r['theta']
     Pg = r['Pg']
     gens = cd.GENS
+    shed = r['shed']
+    load_buses = r['load_buses']
+    Dtotal_vec = np.array([r['D_total'][b] for b in load_buses])
 
-    # ---------- A. 变压器 ----------
+    # ---------- A. 变压器（每个非电源节点一台，同型号）----------
+    S_rated = FP['xf_S_rated']
+    xf_bus, xf_p = node_xf_power(gens, load_buses, Dtotal_vec, shed, cd.N_BUS)
     transformers = []
-    for idx, (f, t, x, rateA, ratio) in enumerate(cd.BRANCHES):
-        if ratio == 0.0:
-            continue
-        tap = ratio
-        bser = 1.0 / (x * tap)
-        flow = base * bser * (theta[f - 1] - theta[t - 1])
-        K = abs(flow) / rateA
+    for i, (b, p) in enumerate(zip(xf_bus, xf_p), start=1):
+        K = p / S_rated
         theta_H, faa, lam_yr, pf = transformer_pf(K, Ta)
         transformers.append({
-            'L': idx + 1, 'fbus': f, 'tbus': t, 'rateA': rateA,
-            'flow_MW': float(flow), 'K': float(K),
-            'theta_H': float(theta_H), 'FAA': float(faa),
+            'Tx': i, 'bus': b, 'S_rated': S_rated, 'P_MW': float(p),
+            'K': float(K), 'theta_H': float(theta_H), 'FAA': float(faa),
             'lambda_yr': float(lam_yr), 'Pf': float(pf),
         })
 
@@ -308,7 +325,8 @@ def compute(verbose=True):
 
     result = {
         'scenario': {'T_amb_C': Ta, 'wind_mps': v, 'irradiance_Wm2': G,
-                     't_expose_h': FP['t_expose_h'], 'I_rated_A': float(I_R)},
+                     't_expose_h': FP['t_expose_h'], 'I_rated_A': float(I_R),
+                     'xf_S_rated': S_rated, 'n_transformers': len(transformers)},
         'transformers': transformers,
         'generators': generators,
         'lines': lines,
@@ -324,14 +342,16 @@ def _print_report(res):
     print('=' * 86)
     print('极热条件元件故障概率（T=%.0f°C, v=%.0f m/s, G=%.0f W/m², 评估窗口=%.0f h）'
           % (sc['T_amb_C'], sc['wind_mps'], sc['irradiance_Wm2'], sc['t_expose_h']))
+    print('统一节点变压器额定容量 S_T^rated = %.0f MW（共 %d 台，非电源节点各一台）'
+          % (sc['xf_S_rated'], sc['n_transformers']))
     print('代表性导线额定电流 I_R = %.1f A' % sc['I_rated_A'])
 
-    print('\n【A】变压器故障概率（IEEE C57.91 热点 + Arrhenius-Weibull）')
-    print('%-4s%-6s%-6s%10s%8s%10s%10s%12s%12s'
-          % ('L', 'fbus', 'tbus', 'flow', 'K', 'thetaH', 'FAA', 'lambda/yr', 'Pf'))
+    print('\n【A】节点变压器故障概率（IEEE C57.91 热点 + Arrhenius-Weibull）')
+    print('%-4s%-5s%10s%8s%10s%10s%12s%12s'
+          % ('Tx', 'bus', 'P(MW)', 'K', 'thetaH', 'FAA', 'lambda/yr', 'Pf'))
     for d in res['transformers']:
-        print('L%-3d%-6d%-6d%10.2f%8.3f%10.1f%10.3f%12.4f%12.3e'
-              % (d['L'], d['fbus'], d['tbus'], d['flow_MW'], d['K'],
+        print('T%-3d%-5d%10.2f%8.3f%10.1f%10.3f%12.4f%12.3e'
+              % (d['Tx'], d['bus'], d['P_MW'], d['K'],
                  d['theta_H'], d['FAA'], d['lambda_yr'], d['Pf']))
 
     print('\n【B】电源故障概率（比例风险应力模型）')

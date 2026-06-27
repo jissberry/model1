@@ -15,6 +15,7 @@ fp.xf_n          = 0.9;     % 顶油温升指数 n
 fp.xf_m          = 0.8;     % 绕组温升指数 m
 fp.xf_theta_ref  = 110.0;   % 参考热点温度 (°C, 65°C-rise 绝缘正常寿命点)
 fp.xf_B_arr      = 15000.0; % Arrhenius 老化常数 B (IEEE C57.91-2011)
+fp.xf_S_rated    = 500.0;   % 统一节点变压器额定容量 S_T^rated (MVA/MW)
 
 % ---- B. 电源 (比例风险/Logistic 应力模型) ----
 %   λ0 基准年强迫停运频次 (/yr)、aT 温度应力系数 (1/°C)、aL 出力应力系数
