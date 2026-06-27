@@ -293,9 +293,8 @@ def compute(verbose=True):
     I_R = rated_current()
     lines = []
     for idx, (f, t, x, rateA, ratio) in enumerate(cd.BRANCHES):
-        if ratio != 0.0:
-            continue
-        bser = 1.0 / x
+        tap = ratio if ratio != 0.0 else 1.0
+        bser = 1.0 / (x * tap)
         flow = base * bser * (theta[f - 1] - theta[t - 1])
         beta = abs(flow) / rateA
         I, Tc, stress, lam_yr, pf = line_pf(beta, Ta, v, G, I_R)

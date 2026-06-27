@@ -96,7 +96,6 @@ I_R = rated_current(fp);
 ln = struct('L',{},'fbus',{},'tbus',{},'rateA',{},'flow',{}, ...
             'beta',{},'I',{},'Tc',{},'stress',{},'lambda_yr',{},'Pf',{});
 for l = 1:nbr
-    if mpc.branch(l,5) ~= 0, continue; end
     f = mpc.branch(l,1); t = mpc.branch(l,2);
     rateA = mpc.branch(l,4);
     flow = res.branch_flow(l);
