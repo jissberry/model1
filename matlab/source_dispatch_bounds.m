@@ -2,7 +2,8 @@ function [lbPg, ubPg] = source_dispatch_bounds(mpc, sc, Pmax, Pmin)
 %SOURCE_DISPATCH_BOUNDS  按机组类型计算调度可行区间（含爬坡/水库电量）
 %
 %   与 docs/01 源侧"调度区间特性与约束"一致，在单时段快照(dt_h)下：
-%     火电: Pmin <= Pg <= Pmax(T)  且 |Pg-Pg0| <= R*dt
+%     火电: 开机时 Pmin <= Pg <= Pmax(T) 且 |Pg-Pg0| <= R*dt；
+%           启停变量 u 在 build_and_solve_dcopf.m 中施加
 %     水电: 0 <= Pg <= Pmax         且 |Pg-Pg0| <= R*dt,  Pg*dt <= E_avail
 %     风电: 0 <= Pg <= Pmax(v)      （可弃风）
 %     光伏: 0 <= Pg <= Pmax(G,T)    （可弃光）
@@ -23,7 +24,7 @@ for g = 1:ng
     rDn      = mpc.genOps(g, 3) * Prated;
 
     switch typeCode
-        case 1  % 火电：最小技术出力 + 高温降容上限 + 爬坡
+        case 1  % 火电：开机状态下的最小技术出力 + 高温降容上限 + 爬坡
             lbPg(g) = max(Pmin(g), Pg0 - rDn);
             ubPg(g) = min(Pmax(g), Pg0 + rUp);
 

@@ -2,7 +2,7 @@
 
 本项目针对**极热无风（Extreme-Heat / No-Wind）复合极端气象事件**，建立电力系统"源-荷"
 供需失衡模型，并基于**修改版 IEEE 39 节点算例**构建以"最小化切负荷惩罚 + 发电成本"为目标的
-**直流最优潮流（DC-OPF）优化调度模型**，用 **MATLAB + Gurobi** 求解极热场景下系统运行的基准状态。
+**直流最优潮流（DC-OPF）优化调度模型**，并对火电机组加入启停二进制变量，用 **MATLAB + Gurobi** 求解极热场景下系统运行的基准状态。
 
 ## 内容结构
 
@@ -21,7 +21,7 @@ matlab/                     MATLAB + Gurobi 主实现
   print_case39_ehnw_data.m  打印完整算例数据（对照 docs/03）
   derate_sources.m          第一步-A：四类机组最大出力(降容)与出力区间
   load_temperature.m        第一步-B：荷侧温度响应需求与一/二/三级拆分
-  build_and_solve_dcopf.m   第二步：构建并用 Gurobi 求解 DC-OPF
+  build_and_solve_dcopf.m   第二步：构建并用 Gurobi 求解含火电启停的 DC-OPF/MIQP
   run_extreme_heat_opf.m    主程序入口（含结果报告）
   fault_probability.m       第四步：节点变压器/电源/线路故障概率（主程序）
   monte_carlo_fault_scenarios.m  第五步：生成2000个85维0/1故障场景
@@ -32,7 +32,7 @@ matlab/                     MATLAB + Gurobi 主实现
 verify/                     开源求解器验证（无需 MATLAB/Gurobi）
   case_data.py              与 MATLAB 完全一致的算例数据
   models.py                 源侧降容 / 荷侧温度模型
-  verify_dcopf.py           cvxpy 复现 DC-OPF（参考实现）
+  verify_dcopf.py           cvxpy 枚举火电启停组合复现 DC-OPF/MIQP（参考实现）
   verify_matrix_form.py     逐元素复现 Gurobi 标准型矩阵装配并对比
   fault_probability.py      第四步故障概率模型（Python 验证，与 MATLAB 一致）
   mc_fault_scenarios.py     第五步蒙特卡洛故障场景生成
@@ -50,7 +50,7 @@ cd matlab
 res = run_extreme_heat_opf();
 ```
 
-将打印源侧出力、荷侧切负荷、功率平衡与线路负载率报告。
+将打印源侧出力（含火电启停状态）、荷侧切负荷、功率平衡与线路负载率报告。
 
 ### Python 开源验证（无 MATLAB/Gurobi 时）
 

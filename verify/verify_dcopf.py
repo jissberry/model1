@@ -6,17 +6,21 @@
 
 约束:
   (1) 直流潮流节点功率平衡:  B_bus * theta = Pinj_pu
-  (2) 源侧分类型调度约束(变量界):
-        火电: Pmin<=Pg<=Pmax(T) 且爬坡; 水电:0<=Pg<=Pmax 且电量/爬坡
+  (2) 源侧分类型调度约束:
+        火电: u*Pmin<=Pg<=u*Pmax(T) 且爬坡; u 为0/1启停变量
+        水电:0<=Pg<=Pmax 且电量/爬坡（无启停变量）
         风电/光伏: 0<=Pg<=Pmax(v,G,T)
   (3) 切负荷区间:  0 <= shed_{j,k} <= D_{j,k}(T)
   (4) 线路潮流约束:  -rateA_l <= f_l <= rateA_l
   (5) 平衡节点相角:  theta_slack = 0
 
-本脚本用 cvxpy(开源 QP 求解器) 复现 MATLAB+Gurobi 模型，用于在无 MATLAB/
-Gurobi 环境下校验模型可行性与结果合理性。两套实现使用同一套数据
-(case_data.py)，最优目标值/出力应当一致。
+本脚本用 cvxpy(开源 QP 求解器) 复现 MATLAB+Gurobi 模型。由于常见
+开源环境未必包含混合整数 QP 求解器，Python 验证侧对 6 台火电机组的
+启停状态进行枚举(2^6=64)，每个启停组合下求解一个连续 QP，并取目标
+函数最小的可行解。两套实现使用同一套数据(case_data.py)。
 """
+
+from itertools import product
 
 import numpy as np
 import cvxpy as cp
@@ -51,6 +55,7 @@ def build_and_solve(verbose=True):
         pmin[g] = md.source_pmin(gen, pmax[g])
         lb_pg[g], ub_pg[g] = md.source_dispatch_bounds(
             gen, cd.GEN_OPS[g], sc, pmax[g], pmin[g])
+    thermal_idx = [g for g, gen in enumerate(gens) if gen[1] == 'thermal']
 
     # ---- 荷侧：温度修正需求 + 等级拆分 ----
     # D_level[bus][k]
@@ -74,73 +79,110 @@ def build_and_solve(verbose=True):
         Bbus[j, i] -= b_series
         branch_rows.append((i, j, b_series, rateA))
 
-    # ---- 决策变量 ----
-    Pg = cp.Variable(ng, name='Pg')
-    theta = cp.Variable(nb, name='theta')
-    # 切负荷: 字典 (bus,k) -> 变量；用矩阵更紧凑
-    shed = cp.Variable((len(load_buses), nlevel), name='shed')
-
-    constraints = []
-
-    # (2) 源侧分类型调度区间
-    constraints += [Pg >= lb_pg, Pg <= ub_pg]
-
-    # (3) 切负荷区间
-    Dmat = np.array([D_level[b] for b in load_buses])  # (nL, nlevel)
-    constraints += [shed >= 0, shed <= Dmat]
-
-    # (5) 平衡节点相角 = 0
-    constraints += [theta[bidx[cd.SLACK_BUS]] == 0]
-
-    # (1) 节点功率平衡:  Bbus*theta(p.u.) = (P_gen - P_netload)/base
-    #     P_netload_n = D_n - sum_k shed_{n,k}
-    gen_at_bus = {b: [] for b in buses}
-    for g, gen in enumerate(gens):
-        gen_at_bus[gen[0]].append(g)
-
-    lb_pos = {b: i for i, b in enumerate(load_buses)}
-
-    inj = []  # 每个节点注入(MW)表达式
-    for b in buses:
-        expr = 0
-        for g in gen_at_bus[b]:
-            expr = expr + Pg[g]
-        if b in D_total:
-            shed_sum = cp.sum(shed[lb_pos[b], :])
-            expr = expr - (D_total[b] - shed_sum)
-        inj.append(expr)
-    inj = cp.hstack(inj)
-
-    constraints += [Bbus @ theta == inj / base]
-
-    # (4) 线路潮流约束:  f_l = base * b_series * (theta_i - theta_j)
-    for (i, j, b_series, rateA) in branch_rows:
-        flow = base * b_series * (theta[i] - theta[j])
-        constraints += [flow <= rateA, flow >= -rateA]
-
     # ---- 目标函数 ----
     c2 = np.array([g[5] for g in gens])
     c1 = np.array([g[6] for g in gens])
     voll = np.array(sc['voll'])
 
-    gen_cost = cp.sum(cp.multiply(c2, cp.square(Pg)) + cp.multiply(c1, Pg))
-    shed_cost = cp.sum(shed @ voll)
-    objective = cp.Minimize(gen_cost + shed_cost)
+    def solve_for_commitment(commitment):
+        Pg = cp.Variable(ng, name='Pg')
+        theta = cp.Variable(nb, name='theta')
+        shed = cp.Variable((len(load_buses), nlevel), name='shed')
 
-    prob = cp.Problem(objective, constraints)
-    prob.solve(solver=cp.CLARABEL, verbose=False)
+        constraints = []
+
+        # (2) 源侧分类型调度区间。火电按给定 u 固定启停；水电不设启停变量。
+        commitment_map = {g: commitment[k] for k, g in enumerate(thermal_idx)}
+        for g in range(ng):
+            if g in commitment_map:
+                if commitment_map[g] == 1:
+                    constraints += [Pg[g] >= lb_pg[g], Pg[g] <= ub_pg[g]]
+                else:
+                    constraints += [Pg[g] == 0]
+            else:
+                constraints += [Pg[g] >= lb_pg[g], Pg[g] <= ub_pg[g]]
+
+        # (3) 切负荷区间
+        Dmat = np.array([D_level[b] for b in load_buses])  # (nL, nlevel)
+        constraints += [shed >= 0, shed <= Dmat]
+
+        # (5) 平衡节点相角 = 0
+        constraints += [theta[bidx[cd.SLACK_BUS]] == 0]
+
+        # (1) 节点功率平衡: Bbus*theta(p.u.) = (P_gen - P_netload)/base
+        gen_at_bus = {b: [] for b in buses}
+        for gg, gen in enumerate(gens):
+            gen_at_bus[gen[0]].append(gg)
+
+        lb_pos = {b: i for i, b in enumerate(load_buses)}
+        inj = []
+        for b in buses:
+            expr = 0
+            for gg in gen_at_bus[b]:
+                expr = expr + Pg[gg]
+            if b in D_total:
+                shed_sum = cp.sum(shed[lb_pos[b], :])
+                expr = expr - (D_total[b] - shed_sum)
+            inj.append(expr)
+        inj = cp.hstack(inj)
+        constraints += [Bbus @ theta == inj / base]
+
+        # (4) 线路潮流约束: f_l = base*b_series*(theta_i-theta_j)
+        for (i, j, b_series, rateA) in branch_rows:
+            flow = base * b_series * (theta[i] - theta[j])
+            constraints += [flow <= rateA, flow >= -rateA]
+
+        gen_cost_expr = cp.sum(cp.multiply(c2, cp.square(Pg)) + cp.multiply(c1, Pg))
+        shed_cost_expr = cp.sum(shed @ voll)
+        prob = cp.Problem(cp.Minimize(gen_cost_expr + shed_cost_expr), constraints)
+        prob.solve(solver=cp.CLARABEL, verbose=False)
+        return prob, Pg, theta, shed, gen_cost_expr, shed_cost_expr
+
+    best = None
+    for commitment in product([0, 1], repeat=len(thermal_idx)):
+        prob, Pg, theta, shed, gen_cost_expr, shed_cost_expr = solve_for_commitment(commitment)
+        if prob.status not in ('optimal', 'optimal_inaccurate'):
+            continue
+        if best is None or prob.value < best['obj']:
+            unit_on = np.ones(ng)
+            for k, g in enumerate(thermal_idx):
+                unit_on[g] = commitment[k]
+            best = {
+                'status': prob.status,
+                'obj': prob.value,
+                'Pg': Pg.value,
+                'theta': theta.value,
+                'shed': shed.value,
+                'gen_cost': gen_cost_expr.value,
+                'shed_cost': shed_cost_expr.value,
+                'unit_on': unit_on,
+            }
+
+    if best is None:
+        best = {
+            'status': 'infeasible',
+            'obj': np.nan,
+            'Pg': np.full(ng, np.nan),
+            'theta': np.full(nb, np.nan),
+            'shed': np.full((len(load_buses), nlevel), np.nan),
+            'gen_cost': np.nan,
+            'shed_cost': np.nan,
+            'unit_on': np.full(ng, np.nan),
+        }
 
     result = {
-        'status': prob.status,
-        'obj': prob.value,
-        'Pg': Pg.value,
-        'theta': theta.value,
-        'shed': shed.value,
+        'status': best['status'],
+        'obj': best['obj'],
+        'Pg': best['Pg'],
+        'theta': best['theta'],
+        'shed': best['shed'],
         'pmax': pmax, 'pmin': pmin, 'lb_pg': lb_pg, 'ub_pg': ub_pg,
         'gens': gens, 'load_buses': load_buses,
         'D_total': D_total, 'D_level': D_level,
-        'gen_cost': gen_cost.value, 'shed_cost': shed_cost.value,
+        'gen_cost': best['gen_cost'], 'shed_cost': best['shed_cost'],
         'branch_rows': branch_rows, 'bidx': bidx,
+        'unit_on': best['unit_on'],
+        'thermal_idx': thermal_idx,
     }
     if verbose:
         report(result, sc)
@@ -163,14 +205,15 @@ def report(r, sc):
 
     # 源侧
     print('源侧机组出力 (MW):')
-    print(f"{'机组':<6}{'母线':<5}{'类型':<9}{'额定':>8}{'Pmin':>8}{'下界':>8}{'上界':>8}{'出力Pg':>10}{'利用率':>8}")
+    print(f"{'机组':<6}{'母线':<5}{'类型':<9}{'u':>4}{'额定':>8}{'Pmin':>8}{'下界':>8}{'上界':>8}{'出力Pg':>10}{'利用率':>8}")
     tot_pg = 0.0
     type_cn = {'thermal': '火电', 'hydro': '水电', 'wind': '风电', 'solar': '光伏'}
     for g, gen in enumerate(gens):
         bus, gtype, fuel, prated = gen[0], gen[1], gen[2], gen[3]
         name = type_cn[gtype] + (f"-{fuel}" if fuel else '')
         util = Pg[g] / prated * 100 if prated > 0 else 0
-        print(f"G{g+1:<5}{bus:<5}{name:<9}{prated:>8.0f}{r['pmin'][g]:>8.1f}"
+        u_show = f"{r['unit_on'][g]:.0f}" if gtype == 'thermal' else "-"
+        print(f"G{g+1:<5}{bus:<5}{name:<9}{u_show:>4}{prated:>8.0f}{r['pmin'][g]:>8.1f}"
               f"{r['lb_pg'][g]:>8.1f}{r['ub_pg'][g]:>8.1f}{Pg[g]:>10.1f}{util:>7.1f}%")
         tot_pg += Pg[g]
     print(f"{'合计总发电':<29}{r['ub_pg'].sum():>8.1f}{tot_pg:>10.1f}")
