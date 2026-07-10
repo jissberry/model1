@@ -44,7 +44,7 @@ def solve_matrix_form():
     ubPg = np.zeros(ng)
     for i, g in enumerate(gens):
         lbPg[i], ubPg[i] = md.source_dispatch_bounds(
-            g, cd.GEN_OPS[i], sc, Pmax[i], Pmin[i])
+            g, cd.GEN_OPS[i], sc, Pmax[i], Pmin[i], use_ramp=False)
 
     Dtotal = np.array([md.bus_demand(cd.PD0[b], sc) for b in load_buses])
     Dlevel = np.outer(Dtotal, np.array(sc['level_frac']))  # (nL, nLev)

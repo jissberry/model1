@@ -13,7 +13,8 @@ docs/                       数学模型文档（中文）
   03_IEEE39修改版完整算例数据.md  修改版 IEEE39 完整节点/支路/机组/负荷数据 + MATLAB 用法
   04_极热条件元件故障概率模型.md  第四步：变压器/电源/线路故障概率模型 + 文献 + 算例概率
   05_蒙特卡洛故障场景抽样.md  第五步：10+46+29=85维0/1故障场景抽样
-  word/                     Word 格式导出（01/02/03/04/05）
+  06_热故障场景最优潮流遍历统计.md  第六步：故障后OPF遍历与切负荷统计
+  word/                     Word 格式导出（01/02/03/04/05/06）
 
 matlab/                     MATLAB + Gurobi 主实现
   case39_ehnw.m             修改版 IEEE39 算例数据（四类机组 + 各类负荷）
@@ -25,6 +26,7 @@ matlab/                     MATLAB + Gurobi 主实现
   run_extreme_heat_opf.m    主程序入口（含结果报告）
   fault_probability.m       第四步：节点变压器/电源/线路故障概率（主程序）
   monte_carlo_fault_scenarios.m  第五步：生成2000个85维0/1故障场景
+  evaluate_fault_scenarios.m  第六步：故障后OPF遍历（基准Pg爬坡+火电启停）
   conductor_temperature.m   IEEE Std 738 稳态热平衡求解导线温度
   fault_params.m            故障概率模型参数
   print_fault_probabilities.m  打印三类元件故障概率报告
@@ -36,7 +38,10 @@ verify/                     开源求解器验证（无需 MATLAB/Gurobi）
   verify_matrix_form.py     逐元素复现 Gurobi 标准型矩阵装配并对比
   fault_probability.py      第四步故障概率模型（Python 验证，与 MATLAB 一致）
   mc_fault_scenarios.py     第五步蒙特卡洛故障场景生成
+  evaluate_fault_scenarios.py  第六步故障后OPF遍历与切负荷统计
   fault_scenarios_2000.csv  2000个85维0/1故障场景
+  fault_scenario_opf_summary.csv  2000场景故障后OPF逐场景结果
+  fault_scenario_opf_stats.json   故障后OPF切负荷分布统计
 ```
 
 ## 运行
@@ -60,6 +65,7 @@ cd verify
 python3 verify_dcopf.py          # 复现 DC-OPF 并输出结果报告
 python3 verify_matrix_form.py    # 校验 MATLAB Gurobi 矩阵装配正确性
 python3 mc_fault_scenarios.py    # 生成2000个85维故障场景
+python3 evaluate_fault_scenarios.py  # 遍历故障后OPF并统计切负荷
 ```
 
 ## 核心结果（$T=40℃$，$v=2\,\text{m/s}$，$G=900\,\text{W/m}^2$）
@@ -73,7 +79,8 @@ python3 mc_fault_scenarios.py    # 生成2000个85维故障场景
 | 可用发电上限 | 6 008.4 MW |
 | 总切负荷 | 762.8 MW（11.29%，全部为三级可中断负荷）|
 
-极热无风下：风电几乎全失、光伏降容至约 75%、水电枯水至 85%、火电高温降容 2.5%~4.5%，
+基准源-荷失衡 OPF 不施加爬坡约束（未知上一时刻出力）；故障后 OPF 以基准 OPF 出力作为爬坡中心，
+并通过火电启停变量处理孤岛最小出力过剩。极热无风下：风电几乎全失、光伏降容至约 75%、水电枯水至 85%、火电高温降容 2.5%~4.5%，
 叠加空调负荷激增，系统出现约 763 MW 硬缺口；最优调度在保障一/二级关键负荷的前提下，
 仅切除惩罚最低的三级可中断负荷，实现经济-安全最优。
 

@@ -1,4 +1,4 @@
-function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel)
+function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel, genAvailable, branchAvailable)
 %BUILD_AND_SOLVE_DCOPF  第二步：构建并用 Gurobi 求解极热场景源-荷失衡 DC-OPF
 %
 %   决策变量  x = [ Pg(ng) ; u_th(nTh) ; theta(nb) ; shed(nL*nLevel) ]
@@ -9,8 +9,8 @@ function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, D
 %   约束:
 %     (1) 直流潮流节点功率平衡(等式)
 %     (2) 源侧分类型调度约束:
-%           火电: u*Pmin<=Pg<=u*Pmax(T) 且爬坡区间；u为0/1启停变量
-%           水电: 0<=Pg<=Pmax且电量/爬坡（无启停变量）
+%           火电: u*Pdisp_min<=Pg<=u*Pdisp_max；u为0/1启停变量
+%           水电: 0<=Pg<=Pmax且电量/可选爬坡（无启停变量）
 %           风电/光伏: 0<=Pg<=Pmax(v,G,T)
 %     (3) 切负荷区间:             0 <= shed_{l,k} <= D_{l,k}(T)
 %     (4) 线路潮流约束
@@ -21,10 +21,35 @@ function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, D
 base = mpc.baseMVA;
 nb   = mpc.nBus;
 ng   = size(mpc.gen, 1);
+nbr  = size(mpc.branch, 1);
 nL   = numel(loadBus);
 nLev = numel(sc.level_frac);
 thermalIdx = find(mpc.gen(:,2) == 1);
 nTh = numel(thermalIdx);
+
+if nargin < 10 || isempty(genAvailable)
+    genAvailable = true(ng, 1);
+end
+if nargin < 11 || isempty(branchAvailable)
+    branchAvailable = true(nbr, 1);
+end
+genAvailable = logical(genAvailable(:));
+branchAvailable = logical(branchAvailable(:));
+if numel(genAvailable) ~= ng
+    error('build_and_solve_dcopf:InvalidGenMask', ...
+        'genAvailable 长度应为 %d，当前为 %d。', ng, numel(genAvailable));
+end
+if numel(branchAvailable) ~= nbr
+    error('build_and_solve_dcopf:InvalidBranchMask', ...
+        'branchAvailable 长度应为 %d，当前为 %d。', nbr, numel(branchAvailable));
+end
+
+% 故障机组最大出力为0；火电故障等价于强制u=0，非火电故障直接Pg=0。
+Pmax = Pmax(:); Pmin = Pmin(:); lbPg = lbPg(:); ubPg = ubPg(:);
+Pmax(~genAvailable) = 0;
+Pmin(~genAvailable) = 0;
+lbPg(~genAvailable) = 0;
+ubPg(~genAvailable) = 0;
 
 % 变量索引
 iPg = @(g) g;
@@ -41,7 +66,6 @@ end
 
 % ---- 构建 Bbus（节点电纳矩阵） ----
 Bbus = zeros(nb, nb);
-nbr  = size(mpc.branch, 1);
 bser = zeros(nbr, 1);
 fb   = mpc.branch(:,1);  tb = mpc.branch(:,2);
 for l = 1:nbr
@@ -49,6 +73,9 @@ for l = 1:nbr
     tap = mpc.branch(l,5);  if tap == 0, tap = 1; end
     b   = 1/(x*tap);
     bser(l) = b;
+    if ~branchAvailable(l)
+        continue;
+    end
     i = fb(l);  j = tb(l);
     Bbus(i,i) = Bbus(i,i) + b;
     Bbus(j,j) = Bbus(j,j) + b;
@@ -90,6 +117,9 @@ end
 
 % (4) 线路潮流约束 2*nbr 行
 for l = 1:nbr
+    if ~branchAvailable(l)
+        continue;
+    end
     i = fb(l);  j = tb(l);
     coef = base*bser(l);
     rateA = mpc.branch(l,4);
@@ -134,6 +164,9 @@ lb(thermalIdx) = 0;
 for k = 1:nTh
     lb(iU(k)) = 0;
     ub(iU(k)) = 1;
+    if ~genAvailable(thermalIdx(k))
+        ub(iU(k)) = 0;
+    end
 end
 % theta 自由，平衡节点固定为 0
 lb(iTh(mpc.slackBus)) = 0;
@@ -181,8 +214,28 @@ gres = gurobi(model, params);
 
 % ---- 解析结果 ----
 res.status   = gres.status;
-res.obj      = gres.objval;
+if ~isfield(gres, 'x')
+    res.obj      = NaN;
+    res.Pg       = NaN(ng, 1);
+    res.uThermal = NaN(nTh, 1);
+    res.unit_on  = NaN(ng, 1);
+    res.thermalIdx = thermalIdx;
+    res.theta    = NaN(nb, 1);
+    res.shed     = NaN(nL, nLev);
+    res.Pmax     = Pmax;  res.Pmin = Pmin;
+    res.lbPg     = lbPg;  res.ubPg = ubPg;
+    res.loadBus  = loadBus; res.Dtotal = Dtotal; res.Dlevel = Dlevel;
+    res.bser     = bser;  res.fb = fb;  res.tb = tb;
+    res.rateA    = mpc.branch(:,4);
+    res.branchAvailable = branchAvailable;
+    res.branch_flow = zeros(nbr, 1);
+    res.genAvailable = genAvailable;
+    res.gen_cost = NaN;
+    res.shed_cost = NaN;
+    return;
+end
 x            = gres.x;
+res.obj      = gres.objval;
 res.Pg       = x(1:ng);
 res.uThermal = x(ng+1 : ng+nTh);
 res.unit_on  = ones(ng, 1);
@@ -195,6 +248,14 @@ res.lbPg     = lbPg;  res.ubPg = ubPg;
 res.loadBus  = loadBus; res.Dtotal = Dtotal; res.Dlevel = Dlevel;
 res.bser     = bser;  res.fb = fb;  res.tb = tb;
 res.rateA    = mpc.branch(:,4);
+res.branchAvailable = branchAvailable;
+res.branch_flow = zeros(nbr, 1);
+for l = 1:nbr
+    if branchAvailable(l)
+        res.branch_flow(l) = base*bser(l)*(res.theta(fb(l))-res.theta(tb(l)));
+    end
+end
+res.genAvailable = genAvailable;
 res.gen_cost = sum(c2.*res.Pg.^2 + c1.*res.Pg);
 res.shed_cost= sum(sum(res.shed .* repmat(sc.voll, nL, 1)));
 

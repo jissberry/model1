@@ -19,9 +19,9 @@ verbose = p.Results.verbose;
 mpc = case39_ehnw();
 sc  = weather_scenario();
 
-% 第一步：源/荷失衡模型
+% 第一步：源/荷失衡模型。基准源-荷失衡OPF未知上一时刻出力，故不施加爬坡约束。
 [Pmax, Pmin, typeName]      = derate_sources(mpc, sc);
-[lbPg, ubPg]                = source_dispatch_bounds(mpc, sc, Pmax, Pmin);
+[lbPg, ubPg]                = source_dispatch_bounds(mpc, sc, Pmax, Pmin, 'useRamp', false);
 [loadBus, Dtotal, Dlevel]   = load_temperature(mpc, sc);
 
 % 第二步：构建并求解最优潮流调度
