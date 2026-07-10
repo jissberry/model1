@@ -1,4 +1,4 @@
-function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel)
+function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, Dtotal, Dlevel, genAvailable, branchAvailable)
 %BUILD_AND_SOLVE_DCOPF  第二步：构建并用 Gurobi 求解极热场景源-荷失衡 DC-OPF
 %
 %   决策变量  x = [ Pg(ng) ; theta(nb) ; shed(nL*nLevel) ]
@@ -19,8 +19,33 @@ function res = build_and_solve_dcopf(mpc, sc, Pmax, Pmin, lbPg, ubPg, loadBus, D
 base = mpc.baseMVA;
 nb   = mpc.nBus;
 ng   = size(mpc.gen, 1);
+nbr  = size(mpc.branch, 1);
 nL   = numel(loadBus);
 nLev = numel(sc.level_frac);
+
+if nargin < 10 || isempty(genAvailable)
+    genAvailable = true(ng, 1);
+end
+if nargin < 11 || isempty(branchAvailable)
+    branchAvailable = true(nbr, 1);
+end
+genAvailable = logical(genAvailable(:));
+branchAvailable = logical(branchAvailable(:));
+if numel(genAvailable) ~= ng
+    error('build_and_solve_dcopf:InvalidGenMask', ...
+        'genAvailable 长度应为 %d，当前为 %d。', ng, numel(genAvailable));
+end
+if numel(branchAvailable) ~= nbr
+    error('build_and_solve_dcopf:InvalidBranchMask', ...
+        'branchAvailable 长度应为 %d，当前为 %d。', nbr, numel(branchAvailable));
+end
+
+% 故障机组最大出力为0；同时将下界置0，避免下界超过上界。
+Pmax = Pmax(:); Pmin = Pmin(:); lbPg = lbPg(:); ubPg = ubPg(:);
+Pmax(~genAvailable) = 0;
+Pmin(~genAvailable) = 0;
+lbPg(~genAvailable) = 0;
+ubPg(~genAvailable) = 0;
 
 % 变量索引
 iPg = @(g) g;
@@ -36,7 +61,6 @@ end
 
 % ---- 构建 Bbus（节点电纳矩阵） ----
 Bbus = zeros(nb, nb);
-nbr  = size(mpc.branch, 1);
 bser = zeros(nbr, 1);
 fb   = mpc.branch(:,1);  tb = mpc.branch(:,2);
 for l = 1:nbr
@@ -44,6 +68,9 @@ for l = 1:nbr
     tap = mpc.branch(l,5);  if tap == 0, tap = 1; end
     b   = 1/(x*tap);
     bser(l) = b;
+    if ~branchAvailable(l)
+        continue;
+    end
     i = fb(l);  j = tb(l);
     Bbus(i,i) = Bbus(i,i) + b;
     Bbus(j,j) = Bbus(j,j) + b;
@@ -85,6 +112,9 @@ end
 
 % (4) 线路潮流约束 2*nbr 行
 for l = 1:nbr
+    if ~branchAvailable(l)
+        continue;
+    end
     i = fb(l);  j = tb(l);
     coef = base*bser(l);
     rateA = mpc.branch(l,4);
@@ -144,15 +174,32 @@ model.Q          = Q;
 model.modelsense = 'min';
 model.vtype      = repmat('C', nvar, 1);
 
-params.OutputFlag = 1;
+params.OutputFlag = 0;
 params.QCPDual    = 0;
 
 gres = gurobi(model, params);
 
 % ---- 解析结果 ----
 res.status   = gres.status;
-res.obj      = gres.objval;
+if ~isfield(gres, 'x')
+    res.obj      = NaN;
+    res.Pg       = NaN(ng, 1);
+    res.theta    = NaN(nb, 1);
+    res.shed     = NaN(nL, nLev);
+    res.Pmax     = Pmax;  res.Pmin = Pmin;
+    res.lbPg     = lbPg;  res.ubPg = ubPg;
+    res.loadBus  = loadBus; res.Dtotal = Dtotal; res.Dlevel = Dlevel;
+    res.bser     = bser;  res.fb = fb;  res.tb = tb;
+    res.rateA    = mpc.branch(:,4);
+    res.branchAvailable = branchAvailable;
+    res.branch_flow = zeros(nbr, 1);
+    res.genAvailable = genAvailable;
+    res.gen_cost = NaN;
+    res.shed_cost = NaN;
+    return;
+end
 x            = gres.x;
+res.obj      = gres.objval;
 res.Pg       = x(1:ng);
 res.theta    = x(ng+1 : ng+nb);
 res.shed     = reshape(x(ng+nb+1:end), nL, nLev);
@@ -161,6 +208,14 @@ res.lbPg     = lbPg;  res.ubPg = ubPg;
 res.loadBus  = loadBus; res.Dtotal = Dtotal; res.Dlevel = Dlevel;
 res.bser     = bser;  res.fb = fb;  res.tb = tb;
 res.rateA    = mpc.branch(:,4);
+res.branchAvailable = branchAvailable;
+res.branch_flow = zeros(nbr, 1);
+for l = 1:nbr
+    if branchAvailable(l)
+        res.branch_flow(l) = base*bser(l)*(res.theta(fb(l))-res.theta(tb(l)));
+    end
+end
+res.genAvailable = genAvailable;
 res.gen_cost = sum(c2.*res.Pg.^2 + c1.*res.Pg);
 res.shed_cost= sum(sum(res.shed .* repmat(sc.voll, nL, 1)));
 

@@ -13,7 +13,8 @@ docs/                       数学模型文档（中文）
   03_IEEE39修改版完整算例数据.md  修改版 IEEE39 完整节点/支路/机组/负荷数据 + MATLAB 用法
   04_极热条件元件故障概率模型.md  第四步：变压器/电源/线路故障概率模型 + 文献 + 算例概率
   05_蒙特卡洛故障场景抽样.md  第五步：10+46+29=85维0/1故障场景抽样
-  word/                     Word 格式导出（01/02/03/04/05）
+  06_热故障场景最优潮流遍历统计.md  第六步：2000个热故障场景DC-OPF遍历与切负荷分布
+  word/                     Word 格式导出（01/02/03/04/05/06）
 
 matlab/                     MATLAB + Gurobi 主实现
   case39_ehnw.m             修改版 IEEE39 算例数据（四类机组 + 各类负荷）
@@ -25,6 +26,7 @@ matlab/                     MATLAB + Gurobi 主实现
   run_extreme_heat_opf.m    主程序入口（含结果报告）
   fault_probability.m       第四步：节点变压器/电源/线路故障概率（主程序）
   monte_carlo_fault_scenarios.m  第五步：生成2000个85维0/1故障场景
+  evaluate_fault_scenarios.m  第六步：遍历故障场景并求解故障后DC-OPF
   conductor_temperature.m   IEEE Std 738 稳态热平衡求解导线温度
   fault_params.m            故障概率模型参数
   print_fault_probabilities.m  打印三类元件故障概率报告
@@ -36,7 +38,11 @@ verify/                     开源求解器验证（无需 MATLAB/Gurobi）
   verify_matrix_form.py     逐元素复现 Gurobi 标准型矩阵装配并对比
   fault_probability.py      第四步故障概率模型（Python 验证，与 MATLAB 一致）
   mc_fault_scenarios.py     第五步蒙特卡洛故障场景生成
+  evaluate_fault_scenarios.py  第六步故障场景DC-OPF遍历与切负荷统计
   fault_scenarios_2000.csv  2000个85维0/1故障场景
+  fault_scenario_opf_summary.csv  每个故障场景的OPF状态与切负荷汇总
+  fault_scenario_bus_shed.csv     每个故障场景、每个负荷节点的切负荷
+  fault_scenario_opf_stats.json   2000场景切负荷分布统计
 ```
 
 ## 运行
@@ -60,6 +66,7 @@ cd verify
 python3 verify_dcopf.py          # 复现 DC-OPF 并输出结果报告
 python3 verify_matrix_form.py    # 校验 MATLAB Gurobi 矩阵装配正确性
 python3 mc_fault_scenarios.py    # 生成2000个85维故障场景
+python3 evaluate_fault_scenarios.py  # 遍历2000个故障场景并统计切负荷
 ```
 
 ## 核心结果（$T=40℃$，$v=2\,\text{m/s}$，$G=900\,\text{W/m}^2$）
@@ -77,4 +84,7 @@ python3 mc_fault_scenarios.py    # 生成2000个85维故障场景
 叠加空调负荷激增，系统出现约 763 MW 硬缺口；最优调度在保障一/二级关键负荷的前提下，
 仅切除惩罚最低的三级可中断负荷，实现经济-安全最优。
 
-详见 `docs/` 下的两份模型文档。
+故障场景遍历结果显示：2000 个热故障场景中 1976 个在原 DC-OPF 约束下可解，
+可解场景平均切负荷 940.3 MW，95% 分位为 1765.6 MW，24 个场景因网络割裂或最小出力约束导致不可行。
+
+详见 `docs/` 下的模型文档。
