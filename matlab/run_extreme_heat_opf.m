@@ -19,9 +19,9 @@ verbose = p.Results.verbose;
 mpc = case39_ehnw();
 sc  = weather_scenario();
 
-% 第一步：源/荷失衡模型
+% 第一步：源/荷失衡模型。基准源-荷失衡OPF未知上一时刻出力，故不施加爬坡约束。
 [Pmax, Pmin, typeName]      = derate_sources(mpc, sc);
-[lbPg, ubPg]                = source_dispatch_bounds(mpc, sc, Pmax, Pmin);
+[lbPg, ubPg]                = source_dispatch_bounds(mpc, sc, Pmax, Pmin, 'useRamp', false);
 [loadBus, Dtotal, Dlevel]   = load_temperature(mpc, sc);
 
 % 第二步：构建并求解最优潮流调度
@@ -56,14 +56,19 @@ fprintf('%s\n', repmat('-',1,74));
 
 ng = size(mpc.gen,1);
 fprintf('源侧机组出力 (MW):\n');
-fprintf('%-6s%-5s%-10s%9s%10s%10s%10s%10s%8s\n', ...
-    '机组','母线','类型','额定','Pmin','调度下界','调度上界','出力Pg','利用率');
+fprintf('%-6s%-5s%-10s%6s%9s%10s%10s%10s%10s%8s\n', ...
+    '机组','母线','类型','u','额定','Pmin','调度下界','调度上界','出力Pg','利用率');
 totPg = 0;
 for g = 1:ng
     prated = mpc.gen(g,4);
     util = 0; if prated>0, util = res.Pg(g)/prated*100; end
-    fprintf('G%-5d%-5d%-10s%9.0f%10.1f%10.1f%10.1f%10.1f%7.1f%%\n', ...
-        g, mpc.gen(g,1), res.typeName{g}, prated, res.Pmin(g), ...
+    if isfield(res, 'unit_on') && mpc.gen(g,2) == 1
+        uShow = sprintf('%.0f', res.unit_on(g));
+    else
+        uShow = '-';
+    end
+    fprintf('G%-5d%-5d%-10s%6s%9.0f%10.1f%10.1f%10.1f%10.1f%7.1f%%\n', ...
+        g, mpc.gen(g,1), res.typeName{g}, uShow, prated, res.Pmin(g), ...
         res.lbPg(g), res.ubPg(g), res.Pg(g), util);
     totPg = totPg + res.Pg(g);
 end

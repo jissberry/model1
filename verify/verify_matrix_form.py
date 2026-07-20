@@ -2,16 +2,19 @@
 校验 matlab/build_and_solve_dcopf.m 的"矩阵形式"装配是否正确。
 
 本脚本严格按照 build_and_solve_dcopf.m 中的变量排列、约束行、目标 Q/obj、
-上下界，原样在 Python 中复现 Gurobi 标准型:
+上下界，原样在 Python 中复现 Gurobi 标准型（含火电启停变量 u）:
 
     min  x' Q x + obj' x
     s.t. A x  (sense)  rhs
          lb <= x <= ub
 
-再用同一 QP 求解器求解，并与 verify_dcopf.py 的参考实现对比目标值与机组出力，
-从而在无 MATLAB/Gurobi 的环境下验证 MATLAB 矩阵装配的正确性
+Python 验证侧枚举火电启停状态，对每个固定 u 的连续 QP 求解，并与
+verify_dcopf.py 的参考实现对比目标值与机组出力，从而在无 MATLAB/Gurobi
+的环境下验证 MATLAB 矩阵装配的正确性
 (变量排序 / 符号 / 索引 / 约束行 是否有误)。
 """
+
+from itertools import product
 
 import numpy as np
 import cvxpy as cp
@@ -27,6 +30,8 @@ def solve_matrix_form():
     nb = cd.N_BUS
     gens = cd.GENS
     ng = len(gens)
+    thermal_idx = [i for i, g in enumerate(gens) if g[1] == 'thermal']
+    nTh = len(thermal_idx)
 
     load_buses = sorted(cd.PD0.keys())
     nL = len(load_buses)
@@ -39,23 +44,26 @@ def solve_matrix_form():
     ubPg = np.zeros(ng)
     for i, g in enumerate(gens):
         lbPg[i], ubPg[i] = md.source_dispatch_bounds(
-            g, cd.GEN_OPS[i], sc, Pmax[i], Pmin[i])
+            g, cd.GEN_OPS[i], sc, Pmax[i], Pmin[i], use_ramp=False)
 
     Dtotal = np.array([md.bus_demand(cd.PD0[b], sc) for b in load_buses])
     Dlevel = np.outer(Dtotal, np.array(sc['level_frac']))  # (nL, nLev)
 
     # ---- 变量索引 (1-based 思路转 0-based) ----
-    # x = [Pg(ng); theta(nb); shed( (k)*nL + l )]
+    # x = [Pg(ng); u_th(nTh); theta(nb); shed( (k)*nL + l )]
     def iPg(g):  # g: 0..ng-1
         return g
 
+    def iU(k):  # k: 0..nTh-1
+        return ng + k
+
     def iTh(n):  # n: 1..nb (bus number)
-        return ng + (n - 1)
+        return ng + nTh + (n - 1)
 
     def iSh(l, k):  # l:0..nL-1, k:0..nLev-1
-        return ng + nb + k * nL + l
+        return ng + nTh + nb + k * nL + l
 
-    nvar = ng + nb + nL * nLev
+    nvar = ng + nTh + nb + nL * nLev
 
     busToLoadPos = {b: l for l, b in enumerate(load_buses)}
     gen_at_bus = {b: [] for b in range(1, nb + 1)}
@@ -118,6 +126,16 @@ def solve_matrix_form():
         A_entries.append((r, iTh(j), -coef))
         rhs.append(-rateA[l]); sense.append('>'); r += 1
 
+    # (2a) 火电启停约束：u_i*lbPg_i <= Pg_i <= u_i*ubPg_i
+    for k, g in enumerate(thermal_idx):
+        A_entries.append((r, iPg(g), 1.0))
+        A_entries.append((r, iU(k), -ubPg[g]))
+        rhs.append(0.0); sense.append('<'); r += 1
+
+        A_entries.append((r, iPg(g), 1.0))
+        A_entries.append((r, iU(k), -lbPg[g]))
+        rhs.append(0.0); sense.append('>'); r += 1
+
     nrow = r
     A = np.zeros((nrow, nvar))
     for (rr, cc, vv) in A_entries:
@@ -129,6 +147,10 @@ def solve_matrix_form():
     ub = np.inf * np.ones(nvar)
     lb[:ng] = lbPg
     ub[:ng] = ubPg
+    lb[thermal_idx] = 0.0
+    for k in range(nTh):
+        lb[iU(k)] = 0.0
+        ub[iU(k)] = 1.0
     lb[iTh(cd.SLACK_BUS)] = 0.0
     ub[iTh(cd.SLACK_BUS)] = 0.0
     for l in range(nL):
@@ -147,30 +169,45 @@ def solve_matrix_form():
     Qdiag = np.zeros(nvar)
     Qdiag[:ng] = c2
 
-    # ---- 解 QP: min x'Qx + obj'x ----
-    x = cp.Variable(nvar)
     eq = np.array([s == '=' for s in sense])
     le = np.array([s == '<' for s in sense])
     ge = np.array([s == '>' for s in sense])
-    cons = [
-        A[eq] @ x == rhs[eq],
-        A[le] @ x <= rhs[le],
-        A[ge] @ x >= rhs[ge],
-    ]
-    # 有限上下界
-    finite_lb = np.isfinite(lb)
-    finite_ub = np.isfinite(ub)
-    cons += [x[finite_lb] >= lb[finite_lb], x[finite_ub] <= ub[finite_ub]]
 
-    objective = cp.Minimize(cp.quad_form(x, np.diag(Qdiag)) + obj @ x)
-    prob = cp.Problem(objective, cons)
-    prob.solve(solver=cp.CLARABEL)
+    best = None
+    for commitment in product([0, 1], repeat=nTh):
+        lb_try = lb.copy()
+        ub_try = ub.copy()
+        for k, u in enumerate(commitment):
+            lb_try[iU(k)] = u
+            ub_try[iU(k)] = u
+
+        # ---- 解 QP: min x'Qx + obj'x ----
+        x = cp.Variable(nvar)
+        cons = [
+            A[eq] @ x == rhs[eq],
+            A[le] @ x <= rhs[le],
+            A[ge] @ x >= rhs[ge],
+        ]
+        finite_lb = np.isfinite(lb_try)
+        finite_ub = np.isfinite(ub_try)
+        cons += [x[finite_lb] >= lb_try[finite_lb], x[finite_ub] <= ub_try[finite_ub]]
+
+        objective = cp.Minimize(cp.quad_form(x, np.diag(Qdiag)) + obj @ x)
+        prob = cp.Problem(objective, cons)
+        prob.solve(solver=cp.CLARABEL)
+        if prob.status not in ('optimal', 'optimal_inaccurate'):
+            continue
+        if best is None or prob.value < best['obj']:
+            best = {'obj': prob.value, 'x': x.value, 'status': prob.status}
+
+    if best is None:
+        return {'status': 'infeasible', 'obj': np.nan, 'Pg': np.full(ng, np.nan), 'shed_total': np.nan}
 
     return {
-        'status': prob.status,
-        'obj': prob.value,
-        'Pg': x.value[:ng],
-        'shed_total': sum(x.value[ng + nb:]),
+        'status': best['status'],
+        'obj': best['obj'],
+        'Pg': best['x'][:ng],
+        'shed_total': sum(best['x'][ng + nTh + nb:]),
     }
 
 

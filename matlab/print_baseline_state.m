@@ -67,7 +67,7 @@ fprintf('  越限线路数         : %d\n', sm.n_overloaded);
 
 %% 发电机
 fprintf('\n【10】发电机出力 (MW)\n');
-fprintf('%-4s%-5s%-12s%10s%10s%10s%8s\n','G','bus','类型','Pg','lb','ub','利用率');
+fprintf('%-4s%-5s%-12s%6s%10s%10s%10s%8s\n','G','bus','类型','u','Pg','lb','ub','利用率');
 ng = numel(res.Pg);
 for g = 1:ng
     bus = mpc.gen(g,1);
@@ -83,8 +83,13 @@ for g = 1:ng
     util = 0; if prated>0, util = res.Pg(g)/prated*100; end
     if isfield(res,'lbPg'), lb = res.lbPg(g); else, lb = res.Pmin(g); end
     if isfield(res,'ubPg'), ub = res.ubPg(g); else, ub = res.Pmax(g); end
-    fprintf('G%-3d%-5d%-12s%10.2f%10.1f%10.1f%7.1f%%\n', ...
-        g, bus, [names{tc} fn], res.Pg(g), lb, ub, util);
+    if isfield(res,'unit_on') && tc == 1
+        uShow = sprintf('%.0f', res.unit_on(g));
+    else
+        uShow = '-';
+    end
+    fprintf('G%-3d%-5d%-12s%6s%10.2f%10.1f%10.1f%7.1f%%\n', ...
+        g, bus, [names{tc} fn], uShow, res.Pg(g), lb, ub, util);
 end
 
 %% 节点状态

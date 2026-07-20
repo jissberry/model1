@@ -97,21 +97,34 @@ def source_pmin(gen, pmax):
     return 0.0
 
 
-def source_dispatch_bounds(gen, ops, sc, pmax, pmin):
-    """计算单时段调度可行区间 lb/ub（含爬坡、水电电量约束）。"""
+def source_dispatch_bounds(gen, ops, sc, pmax, pmin, use_ramp=True, pg0_override=None):
+    """计算单时段调度可行区间 lb/ub。
+
+    基准源-荷失衡 OPF 未知上一时刻出力，调用时 use_ramp=False；
+    故障后 OPF 以基准 OPF 出力为爬坡中心，调用时 use_ramp=True 且传入
+    pg0_override。
+    """
     gtype, pmax_rated = gen[1], gen[3]
     pg0, r_up, r_dn, e_frac = ops
+    if pg0_override is not None:
+        pg0 = float(pg0_override)
     dt = sc['dt_h']
     r_up_mw = r_up * pmax_rated
     r_dn_mw = r_dn * pmax_rated
 
     if gtype == 'thermal':
-        lb = max(pmin, pg0 - r_dn_mw)
-        ub = min(pmax, pg0 + r_up_mw)
+        lb = pmin
+        ub = pmax
+        if use_ramp:
+            lb = max(lb, pg0 - r_dn_mw)
+            ub = min(ub, pg0 + r_up_mw)
     elif gtype == 'hydro':
         plim_e = e_frac * pmax_rated * dt / dt
-        lb = max(0.0, pg0 - r_dn_mw)
-        ub = min(pmax, pg0 + r_up_mw, plim_e)
+        lb = 0.0
+        ub = min(pmax, plim_e)
+        if use_ramp:
+            lb = max(lb, pg0 - r_dn_mw)
+            ub = min(ub, pg0 + r_up_mw)
     elif gtype in ('wind', 'solar'):
         lb, ub = 0.0, pmax
     else:

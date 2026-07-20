@@ -1,35 +1,32 @@
-"""遍历蒙特卡洛故障场景并求解故障后 DC-OPF。
+"""遍历 2000 个热故障场景并求解故障后 DC-OPF。
 
-输入场景向量顺序为 [G1..G10, L1..L46, T1..T29]，0=故障，1=良好。
-故障映射规则：
-  * 发电机故障：该机组 Pg 上下界均置为 0；
-  * 线路故障：该支路退出 DC 网络，结果潮流记为 0；
-  * 节点变压器故障：该非电源节点相连支路全部退出。若该节点有负荷，
-    节点功率平衡会使其负荷在 OPF 中被切除。
+规则：
+  1. 基准源-荷失衡 OPF 不施加爬坡；
+  2. 故障后 OPF 施加爬坡，基准出力为步骤1得到的 Pg；
+  3. 火电有启停变量，可在孤岛最小出力过剩时关停以保证可解；
+  4. 水电无启停变量。
 """
 
 import csv
 import json
-from collections import Counter
+from collections import Counter, defaultdict, deque
 from pathlib import Path
 
 import numpy as np
 
 import case_data as cd
 import mc_fault_scenarios
+import models as md
 import verify_dcopf
 
 
 SCENARIO_CSV = Path('/workspace/verify/fault_scenarios_2000.csv')
 OUT_SUMMARY_CSV = Path('/workspace/verify/fault_scenario_opf_summary.csv')
-OUT_BUS_SHED_CSV = Path('/workspace/verify/fault_scenario_bus_shed.csv')
 OUT_JSON = Path('/workspace/verify/fault_scenario_opf_stats.json')
-
 OPTIMAL_STATUSES = {'optimal', 'optimal_inaccurate'}
 
 
 def transformer_buses():
-    """T1..T29 对应所有非发电节点的升序列表。"""
     gen_buses = {gen[0] for gen in cd.GENS}
     buses = [bus for bus in range(1, cd.N_BUS + 1) if bus not in gen_buses]
     if len(buses) != 29:
@@ -44,24 +41,22 @@ def ensure_scenarios(path=SCENARIO_CSV):
 
 def read_scenarios(path=SCENARIO_CSV):
     ensure_scenarios(path)
+    rows = []
+    scenario_ids = []
     with path.open('r', newline='', encoding='utf-8') as f:
         reader = csv.reader(f)
-        header = next(reader)
-        labels = header[1:]
-        rows = []
-        scenario_ids = []
+        labels = next(reader)[1:]
         for row in reader:
             scenario_ids.append(int(row[0]))
             rows.append([int(x) for x in row[1:]])
     states = np.asarray(rows, dtype=np.uint8)
     if states.ndim != 2 or states.shape[1] != 85:
-        raise ValueError(f'期望场景矩阵为 n x 85，当前形状为 {states.shape}')
+        raise ValueError(f'期望场景矩阵为 n x 85，当前为 {states.shape}')
     return labels, scenario_ids, states
 
 
 def availability_from_state(state):
-    """把 85 维状态向量转换为发电机/支路可用性掩码。"""
-    state = np.asarray(state, dtype=np.uint8)
+    state = np.asarray(state, dtype=np.uint8).reshape(-1)
     if state.size != 85:
         raise ValueError(f'状态向量长度应为 85，当前为 {state.size}')
 
@@ -84,12 +79,75 @@ def availability_from_state(state):
 
     return {
         'gen_available': gen_available,
-        'branch_available': branch_available,
         'direct_branch_available': direct_branch_available,
+        'branch_available': branch_available,
         'xf_available': xf_available,
         'failed_xf_buses': sorted(failed_xf_buses),
         'xf_forced_outages': xf_forced_outages,
     }
+
+
+def components(branch_available):
+    adj = defaultdict(set)
+    for bus in range(1, cd.N_BUS + 1):
+        adj[bus] = set()
+    for idx, (fbus, tbus, _x, _rateA, _ratio) in enumerate(cd.BRANCHES):
+        if branch_available[idx]:
+            adj[fbus].add(tbus)
+            adj[tbus].add(fbus)
+
+    seen = set()
+    comps = []
+    for bus in range(1, cd.N_BUS + 1):
+        if bus in seen:
+            continue
+        q = deque([bus])
+        seen.add(bus)
+        comp = {bus}
+        while q:
+            u = q.popleft()
+            for v in adj[u]:
+                if v not in seen:
+                    seen.add(v)
+                    comp.add(v)
+                    q.append(v)
+        comps.append(comp)
+    return comps
+
+
+def auto_unit_commitment(gen_available, branch_available, lb_pg):
+    """按孤岛检测自动关停过剩火电，减少最小出力导致的不可行。
+
+    初始假设所有可用火电开机；若某孤岛内开机最小出力超过该岛全部负荷，
+    则优先关停最小出力较大的火电，直到最小出力不超过可消纳负荷。
+    """
+    unit_on = np.ones(len(cd.GENS))
+    for g, gen in enumerate(cd.GENS):
+        if gen[1] == 'thermal':
+            unit_on[g] = 1 if gen_available[g] else 0
+        elif not gen_available[g]:
+            unit_on[g] = 0
+
+    gen_by_bus = {gen[0]: idx for idx, gen in enumerate(cd.GENS)}
+    for comp in components(branch_available):
+        demand = sum(cd.PD0.get(bus, 0.0) for bus in comp)
+        thermal = [
+            gen_by_bus[bus]
+            for bus in comp
+            if bus in gen_by_bus
+            and cd.GENS[gen_by_bus[bus]][1] == 'thermal'
+            and gen_available[gen_by_bus[bus]]
+        ]
+        min_gen = sum(lb_pg[g] for g in thermal if unit_on[g] > 0.5)
+        if min_gen <= demand + 1e-6:
+            continue
+        # 过剩孤岛：关停火电。按最小出力从大到小关停，更快消除过剩。
+        for g in sorted(thermal, key=lambda x: lb_pg[x], reverse=True):
+            unit_on[g] = 0
+            min_gen -= lb_pg[g]
+            if min_gen <= demand + 1e-6:
+                break
+    return unit_on
 
 
 def _safe_float(value):
@@ -101,41 +159,67 @@ def _safe_float(value):
     return value
 
 
-def solve_one(scenario_id, state):
+def solve_one(scenario_id, state, baseline_pg):
     masks = availability_from_state(state)
+    # 获取故障后爬坡上下界，用于自动孤岛启停判断；这里不求解OPF。
+    lb_pg = np.zeros(len(cd.GENS))
+    for g, gen in enumerate(cd.GENS):
+        pmax = md.source_pmax(gen, cd.SCENARIO)
+        pmin = md.source_pmin(gen, pmax)
+        lb_pg[g], _ = md.source_dispatch_bounds(
+            gen,
+            cd.GEN_OPS[g],
+            cd.SCENARIO,
+            pmax,
+            pmin,
+            use_ramp=True,
+            pg0_override=baseline_pg[g],
+        )
+        if not masks['gen_available'][g]:
+            lb_pg[g] = 0.0
+    fixed_unit_on = auto_unit_commitment(
+        masks['gen_available'], masks['branch_available'], lb_pg
+    )
+
     result = verify_dcopf.build_and_solve(
         verbose=False,
+        use_ramp=True,
+        pg0_override=baseline_pg,
         gen_available=masks['gen_available'],
         branch_available=masks['branch_available'],
+        fixed_unit_on=fixed_unit_on,
     )
+    # 若自动启停仍不可行，回退为完整火电启停枚举。
+    if result['status'] not in OPTIMAL_STATUSES:
+        result = verify_dcopf.build_and_solve(
+            verbose=False,
+            use_ramp=True,
+            pg0_override=baseline_pg,
+            gen_available=masks['gen_available'],
+            branch_available=masks['branch_available'],
+            fixed_unit_on=None,
+        )
 
     gen_faults = np.where(~masks['gen_available'])[0] + 1
     line_faults = np.where(~masks['direct_branch_available'])[0] + 1
-    branch_outages = np.where(~masks['branch_available'])[0] + 1
     xf_faults = np.where(~masks['xf_available'])[0] + 1
+    branch_outages = np.where(~masks['branch_available'])[0] + 1
 
-    status = result['status']
-    optimal = status in OPTIMAL_STATUSES
     total_demand = float(sum(result['D_total'].values()))
-    load_buses = result['load_buses']
-
+    optimal = result['status'] in OPTIMAL_STATUSES
     if optimal:
         shed = np.asarray(result['shed'], dtype=float)
         shed_by_level = shed.sum(axis=0)
         total_shed = float(shed.sum())
-        shed_pct = total_shed / total_demand * 100.0
         served = total_demand - total_shed
-        bus_shed = shed.sum(axis=1)
+        shed_pct = total_shed / total_demand * 100.0
     else:
-        shed_by_level = np.full(len(cd.SCENARIO['level_frac']), np.nan)
-        total_shed = np.nan
-        shed_pct = np.nan
-        served = np.nan
-        bus_shed = np.full(len(load_buses), np.nan)
+        shed_by_level = np.full(3, np.nan)
+        total_shed = served = shed_pct = np.nan
 
-    summary = {
+    return {
         'scenario': scenario_id,
-        'status': status,
+        'status': result['status'],
         'objective': _safe_float(result['obj']),
         'gen_cost': _safe_float(result['gen_cost']),
         'shed_cost': _safe_float(result['shed_cost']),
@@ -150,32 +234,26 @@ def solve_one(scenario_id, state):
         'n_line_fault_direct': int(line_faults.size),
         'n_transformer_fault': int(xf_faults.size),
         'n_branch_outage_total': int(branch_outages.size),
-        'n_branch_outage_by_transformer': int(len(masks['xf_forced_outages'])),
+        'n_thermal_off': int(sum(1 for g, gen in enumerate(cd.GENS) if gen[1] == 'thermal' and result['unit_on'][g] < 0.5)),
         'failed_generators': ';'.join(f'G{i}' for i in gen_faults),
         'failed_lines_direct': ';'.join(f'L{i}' for i in line_faults),
         'failed_transformers': ';'.join(f'T{i}' for i in xf_faults),
         'failed_transformer_buses': ';'.join(str(b) for b in masks['failed_xf_buses']),
         'outaged_branches_total': ';'.join(f'L{i}' for i in branch_outages),
+        'thermal_unit_on': ';'.join(
+            f"G{g+1}={int(round(result['unit_on'][g]))}"
+            for g, gen in enumerate(cd.GENS)
+            if gen[1] == 'thermal'
+        ),
     }
 
-    bus_row = {'scenario': scenario_id, 'status': status}
-    for bus, value in zip(load_buses, bus_shed):
-        bus_row[f'bus_{bus}_shed_MW'] = _safe_float(value)
 
-    return summary, bus_row
-
-
-def write_csv(path, rows, fieldnames):
+def write_csv(path, rows):
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
         writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def percentile(values, q):
-    return float(np.percentile(values, q))
+        writer.writerows(rows)
 
 
 def distribution(values):
@@ -188,88 +266,51 @@ def distribution(values):
         'min': float(np.min(values)),
         'mean': float(np.mean(values)),
         'std': float(np.std(values, ddof=0)),
-        'p05': percentile(values, 5),
-        'p25': percentile(values, 25),
-        'median': percentile(values, 50),
-        'p75': percentile(values, 75),
-        'p90': percentile(values, 90),
-        'p95': percentile(values, 95),
-        'p99': percentile(values, 99),
+        'p05': float(np.percentile(values, 5)),
+        'p25': float(np.percentile(values, 25)),
+        'median': float(np.percentile(values, 50)),
+        'p75': float(np.percentile(values, 75)),
+        'p90': float(np.percentile(values, 90)),
+        'p95': float(np.percentile(values, 95)),
+        'p99': float(np.percentile(values, 99)),
         'max': float(np.max(values)),
-    }
-
-
-def build_stats(summary_rows, baseline_shed):
-    status_counts = Counter(row['status'] for row in summary_rows)
-    optimal_rows = [row for row in summary_rows if row['status'] in OPTIMAL_STATUSES]
-
-    total_shed = np.array([float(row['total_shed_MW']) for row in optimal_rows])
-    level1 = np.array([float(row['shed_level1_MW']) for row in optimal_rows])
-    level2 = np.array([float(row['shed_level2_MW']) for row in optimal_rows])
-    level3 = np.array([float(row['shed_level3_MW']) for row in optimal_rows])
-    incremental = total_shed - baseline_shed
-
-    return {
-        'n_scenarios': len(summary_rows),
-        'status_counts': dict(status_counts),
-        'baseline_total_shed_MW': float(baseline_shed),
-        'total_shed_MW': distribution(total_shed),
-        'incremental_shed_vs_baseline_MW': distribution(incremental),
-        'shed_level1_MW': distribution(level1),
-        'shed_level2_MW': distribution(level2),
-        'shed_level3_MW': distribution(level3),
-        'probability_estimates': {
-            'optimal_fraction': len(optimal_rows) / len(summary_rows),
-            'any_incremental_shed_fraction': float(np.mean(incremental > 1e-5)) if len(optimal_rows) else None,
-            'level1_shed_fraction': float(np.mean(level1 > 1e-5)) if len(optimal_rows) else None,
-            'level2_shed_fraction': float(np.mean(level2 > 1e-5)) if len(optimal_rows) else None,
-            'level3_shed_fraction': float(np.mean(level3 > 1e-5)) if len(optimal_rows) else None,
-        },
     }
 
 
 def evaluate(path=SCENARIO_CSV, verbose=True):
     _labels, scenario_ids, states = read_scenarios(path)
-
-    baseline = verify_dcopf.build_and_solve(verbose=False)
+    baseline = verify_dcopf.build_and_solve(verbose=False, use_ramp=False)
+    baseline_pg = baseline['Pg']
     baseline_shed = float(np.sum(baseline['shed']))
 
-    summary_rows = []
-    bus_rows = []
+    rows = []
     for pos, (scenario_id, state) in enumerate(zip(scenario_ids, states), start=1):
-        summary, bus_row = solve_one(scenario_id, state)
-        summary_rows.append(summary)
-        bus_rows.append(bus_row)
+        rows.append(solve_one(scenario_id, state, baseline_pg))
         if verbose and (pos == 1 or pos % 100 == 0 or pos == len(scenario_ids)):
             print(f'solved {pos}/{len(scenario_ids)} scenarios')
 
-    summary_fields = list(summary_rows[0].keys())
-    bus_fields = list(bus_rows[0].keys())
-    write_csv(OUT_SUMMARY_CSV, summary_rows, summary_fields)
-    write_csv(OUT_BUS_SHED_CSV, bus_rows, bus_fields)
-
-    stats = build_stats(summary_rows, baseline_shed)
-    stats.update({
-        'input_csv': str(path),
+    write_csv(OUT_SUMMARY_CSV, rows)
+    optimal_rows = [r for r in rows if r['status'] in OPTIMAL_STATUSES]
+    total_shed = np.array([float(r['total_shed_MW']) for r in optimal_rows])
+    incremental = total_shed - baseline_shed
+    stats = {
+        'n_scenarios': len(rows),
+        'status_counts': dict(Counter(r['status'] for r in rows)),
+        'baseline_uses_ramp': False,
+        'fault_opf_uses_ramp': True,
+        'fault_ramp_reference': 'baseline OPF Pg',
+        'baseline_total_shed_MW': baseline_shed,
+        'total_shed_MW': distribution(total_shed),
+        'incremental_shed_vs_baseline_MW': distribution(incremental),
         'summary_csv': str(OUT_SUMMARY_CSV),
-        'bus_shed_csv': str(OUT_BUS_SHED_CSV),
-        'state_encoding': {'0': 'fault', '1': 'healthy'},
-        'fault_mapping': {
-            'generator_fault': 'Pg lower/upper bounds set to 0',
-            'line_fault': 'branch removed from DC network; reported flow set to 0',
-            'transformer_fault': 'all branches incident to the transformer bus removed',
-            'transformer_order': 'T1..T29 are non-generator buses in ascending bus order',
-            'transformer_buses': transformer_buses(),
-        },
-    })
+    }
+    OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     with OUT_JSON.open('w', encoding='utf-8') as f:
         json.dump(stats, f, ensure_ascii=False, indent=2)
-
     if verbose:
         print(f'written {OUT_SUMMARY_CSV}')
-        print(f'written {OUT_BUS_SHED_CSV}')
         print(f'written {OUT_JSON}')
-        print(json.dumps(stats['total_shed_MW'], ensure_ascii=False, indent=2))
+        print(json.dumps(stats, ensure_ascii=False, indent=2))
     return stats
 
 
