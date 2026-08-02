@@ -43,3 +43,23 @@ python3 scripts/make_paper_figures.py
 | VI-B 基准 OPF 结果 | 图 3、图 4 |
 | VI-C 故障概率与蒙特卡洛场景 | 图 5、图 6 |
 | VI-D 故障后 OPF 遍历结果 | 图 7、图 8 |
+
+## 优化版预览（尚未替换正式图）
+
+预览图位于 `docs/figures/preview/`，仅供审阅，**不会自动覆盖**上级目录中的 `fig1`–`fig8`。
+
+**先看总览：**
+
+| 文件 | 说明 |
+|---|---|
+| `preview/contact_optimized.png` | 图 1–8 优化版拼图 |
+| `preview/contact_new_candidates.png` | 3 张新增候选图拼图 |
+
+**单张预览：**
+
+| 文件 | 对应 |
+|---|---|
+| `preview_01_framework_v2.png` … `preview_08_risk_drivers_v2.png` | 现有图 1–8 优化版 |
+| `preview_09_new_risk_consequence.png` | 新增候选 A：元件概率—后果风险矩阵 |
+| `preview_10_new_bus_exposure.png` | 新增候选 B：负荷节点失电暴露度 |
+| `preview_11_new_exceedance.png` | 新增候选 C：新增切负荷超越概率曲线 |
