@@ -20,6 +20,7 @@ python3 scripts/make_paper_figures.py
 | 图 5 | `verify/fault_probability.json` |
 | 图 6 | `verify/fault_scenarios_2000.csv`、`fault_scenarios_2000_meta.json` |
 | 图 7、图 8 | `verify/fault_scenario_opf_stats.json`、`fault_scenario_opf_summary.csv` |
+| 图 9 | `verify/case_data.py`（39 节点、46 支路与 10 台机组类型） |
 
 ## 图目录
 
@@ -33,12 +34,14 @@ python3 scripts/make_paper_figures.py
 | `fig6_monte_carlo.png` | 蒙特卡洛故障场景抽样结果 | (a) 故障元件数分布；(b) 各类元件故障事件数；(c) 抽样一致性校验 |
 | `fig7_shedding_distribution.png` | 2000 个热故障场景的切负荷分布 | (a) 频数分布；(b) 经验累积分布；(c) 分位数切负荷构成 |
 | `fig8_risk_drivers.png` | 切负荷风险的主导因素分析 | (a) 发电机故障数影响；(b) 网络故障与火电停机耦合；(c) 不同故障组合对比 |
+| `fig9_modified_ieee39_schematic.png` / `.svg` | 修改版 IEEE 39 节点系统简化单线示意图 | 保留 39 节点和 46 支路拓扑；标注负荷、变压器以及水电/燃煤/燃气/风电/光伏机组 |
 
 ## 建议插入位置
 
 | 章节 | 图 |
 |---|---|
 | I. 引言 / II. 建模 开头 | 图 1 |
+| VI-A 修改版 IEEE 39 节点系统 | 图 9 |
 | II. 极热无风条件下的源荷失衡建模 | 图 2 |
 | VI-B 基准 OPF 结果 | 图 3、图 4 |
 | VI-C 故障概率与蒙特卡洛场景 | 图 5、图 6 |
