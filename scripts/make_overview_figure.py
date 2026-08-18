@@ -3,15 +3,11 @@
 """Generate the modified IEEE 39-bus system overview figure (SVG).
 
 All figures shown are verified against the case data in
-``verify/case_data.py`` / ``matlab/case39_ehnw.m`` and the DC-OPF baseline
-state (``verify/baseline_state.json``):
+``verify/case_data.py`` / ``matlab/case39_ehnw.m``:
 
     39 buses, 46 branches, 10 generators, 29 node transformers (non-source
     buses 1-29), generator mix 6 thermal / 1 hydro / 2 wind / 1 solar,
-    weather T=40C, v=2 m/s, G=900 W/m^2, and     the source-load imbalance
-    (demand 6754.6 MW, actual served power 5991.8 MW, so that the identity
-    6754.6 - 5991.8 = 762.8 MW load shed = 11.29% holds exactly; the
-    available generation upper bound is 6008.4 MW).
+    weather T=40C, v=2 m/s, G=900 W/m^2.
 
 Chinese labels are written as unicode escapes so the source stays pure
 ASCII; the output SVG is written as UTF-8.
@@ -41,17 +37,13 @@ T = {
     "Tlab":    "\u73af\u5883\u6e29\u5ea6 T",
     "vlab":    "\u98ce\u901f v",
     "Glab":    "\u8f90\u7167\u5ea6 G",
-    "result":  "\u6e90-\u8377\u4f9b\u9700\u5931\u8861\uff08DC-OPF \u57fa\u51c6\u7ed3\u679c\uff09",
-    "demand":  "\u6781\u70ed\u4fee\u6b63\u603b\u9700\u6c42",
-    "avail":   "\u7cfb\u7edf\u5b9e\u9645\u4f9b\u7535",
-    "shed":    "\u786c\u7f3a\u53e3 \xb7 \u5207\u8d1f\u8377",
 }
 
 FONT = ("'WenQuanYi Micro Hei','Noto Sans CJK SC','PingFang SC',"
         "'Microsoft YaHei',sans-serif")
 
 SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="680" height="940" viewBox="0 0 680 940" font-family="{FONT}">
+<svg xmlns="http://www.w3.org/2000/svg" width="680" height="704" viewBox="0 0 680 704" font-family="{FONT}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#f5f7fc"/>
@@ -61,10 +53,6 @@ SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
       <stop offset="0" stop-color="#1d4ed8"/>
       <stop offset="1" stop-color="#4f46e5"/>
     </linearGradient>
-    <linearGradient id="alert" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#fff5f2"/>
-      <stop offset="1" stop-color="#ffe8e0"/>
-    </linearGradient>
     <filter id="softshadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="3" stdDeviation="6" flood-color="#1e293b" flood-opacity="0.12"/>
     </filter>
@@ -73,8 +61,8 @@ SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
     </filter>
   </defs>
 
-  <rect x="0" y="0" width="680" height="940" fill="url(#bg)"/>
-  <rect x="24" y="24" width="632" height="892" rx="24" fill="#ffffff" filter="url(#softshadow)"/>
+  <rect x="0" y="0" width="680" height="704" fill="url(#bg)"/>
+  <rect x="24" y="24" width="632" height="656" rx="24" fill="#ffffff" filter="url(#softshadow)"/>
 
   <rect x="48" y="48" width="584" height="76" rx="16" fill="url(#titlebar)"/>
   <text x="340" y="90" text-anchor="middle" font-size="30" font-weight="700" fill="#ffffff">{T['title']}</text>
@@ -138,27 +126,6 @@ SVG = f"""<?xml version="1.0" encoding="UTF-8"?>
     <text x="462" y="600" font-size="14" fill="#b45309">{T['Glab']}</text>
     <text x="462" y="640" font-size="34" font-weight="800" fill="#d97706">900<tspan font-size="16" font-weight="600"> W/m\xb2</tspan></text>
   </g>
-
-  <rect x="48" y="686" width="584" height="196" rx="18" fill="url(#alert)" stroke="#fecaca"/>
-  <text x="72" y="722" font-size="17" font-weight="800" fill="#991b1b">{T['result']}</text>
-
-  <text x="120" y="778" text-anchor="middle" font-size="14" fill="#475569">{T['demand']}</text>
-  <text x="120" y="812" text-anchor="middle" font-size="30" font-weight="800" fill="#1e293b">6754.6</text>
-  <text x="120" y="834" text-anchor="middle" font-size="13" fill="#64748b">MW</text>
-
-  <text x="228" y="800" text-anchor="middle" font-size="30" font-weight="700" fill="#94a3b8">-</text>
-
-  <text x="340" y="778" text-anchor="middle" font-size="14" fill="#475569">{T['avail']}</text>
-  <text x="340" y="812" text-anchor="middle" font-size="30" font-weight="800" fill="#1e293b">5991.8</text>
-  <text x="340" y="834" text-anchor="middle" font-size="13" fill="#64748b">MW</text>
-
-  <text x="452" y="800" text-anchor="middle" font-size="30" font-weight="700" fill="#94a3b8">=</text>
-
-  <rect x="500" y="742" width="112" height="118" rx="14" fill="#dc2626"/>
-  <text x="556" y="770" text-anchor="middle" font-size="14" fill="#fecaca">{T['shed']}</text>
-  <text x="556" y="808" text-anchor="middle" font-size="32" font-weight="800" fill="#ffffff">762.8</text>
-  <text x="556" y="830" text-anchor="middle" font-size="13" fill="#fecaca">MW</text>
-  <text x="556" y="850" text-anchor="middle" font-size="15" font-weight="800" fill="#ffe4e6">11.29%</text>
 </svg>
 """
 
